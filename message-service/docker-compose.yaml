@@ -1,0 +1,20 @@
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: message_service_mongodb
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${DB_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASSWORD:-password}
+    ports:
+      - "27017:27017"
+    volumes:
+      - message_service_mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  message_service_mongodb_data:

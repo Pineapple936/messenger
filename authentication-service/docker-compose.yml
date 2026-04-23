@@ -1,0 +1,22 @@
+services:
+  authentication-service-db:
+    image: postgres:15
+    container_name: authentication-service-db
+    restart: always
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-user_credential}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-user_credential}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - authentication-service-db_data:/var/lib/postgresql/data
+
+volumes:
+  authentication-service-db_data:

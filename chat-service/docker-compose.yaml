@@ -1,0 +1,22 @@
+services:
+  chat-service-db:
+    image: postgres:15
+    container_name: chat-service-db
+    restart: always
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-chat}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-chat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - chat-service-db_data:/var/lib/postgresql/data
+
+volumes:
+  chat-service-db_data:

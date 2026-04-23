@@ -1,0 +1,70 @@
+package messenger.messageservice.api;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import lombok.RequiredArgsConstructor;
+import messenger.commonlibs.dto.messageservice.MessageDto;
+import messenger.messageservice.api.dto.CreateMessage;
+import messenger.messageservice.api.dto.MessageResponse;
+import messenger.messageservice.api.dto.MessageReadListDto;
+import messenger.messageservice.api.mapper.MessageMapper;
+import messenger.messageservice.domain.MessageService;
+import org.springframework.data.domain.Slice;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
+
+import static messenger.commonlibs.Constants.USER_ID_HEADER;
+
+@Validated
+@RestController
+@RequestMapping("/message")
+@RequiredArgsConstructor
+public class MessageController {
+    private final MessageService messageService;
+    private final MessageMapper messageMapper;
+
+    @PostMapping
+    public ResponseEntity<MessageResponse> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                      @RequestBody @Valid CreateMessage request) {
+        MessageDto dto = MessageDto
+                .builder()
+                .chatId(request.chatId())
+                .userId(userId)
+                .content(request.content())
+                .readStatus(false)
+                .sendAt(request.sendAt())
+                .build();
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toResponse(messageService.saveAndPublish(dto)));
+    }
+
+    @GetMapping("/chat/{chatId}")
+    public ResponseEntity<Slice<MessageResponse>> paginationMessages(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                             @PathVariable @Positive Long chatId,
+                                                             @RequestParam(defaultValue = "50") Integer limit,
+                                                             @RequestParam(defaultValue = "0") Integer offset) {
+        return ResponseEntity.ok(messageService.getSlice(userId, chatId, limit, offset));
+    }
+
+    @PutMapping("/read/{messageId}")
+    public ResponseEntity<Void> readMessageById(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                @PathVariable String messageId) {
+        messageService.readMessageById(userId, messageId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/read")
+    public ResponseEntity<Void> readMessageByList(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                  @Valid @RequestBody MessageReadListDto dto) {
+        messageService.readMessageByList(userId, dto);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/{messageId}")
+    public ResponseEntity<Void> delete(@RequestHeader(USER_ID_HEADER) Long userId,
+                                       @PathVariable String messageId) {
+        messageService.deleteById(userId, messageId);
+        return ResponseEntity.noContent().build();
+    }
+}

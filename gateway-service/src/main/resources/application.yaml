@@ -1,0 +1,43 @@
+server:
+  port: 8080
+
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${GATEWAY_KAFKA_GROUP_ID:gateway-message-delivery}
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+      properties:
+        spring.json.value.default.type: messenger.commonlibs.dto.messageservice.MessageDto
+        spring.json.use.type.headers: false
+        spring.json.trusted.packages: messenger.commonlibs.dto.messageservice
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: auth_route
+              uri: ${AUTH_SERVICE_URI:${AUTH_SERVICE_URL:http://localhost:8081}}
+              predicates:
+                - Path=/auth/**
+            - id: user_route
+              uri: ${USER_SERVICE_URI:${USER_SERVICE_URL:http://localhost:8082}}
+              predicates:
+                - Path=/user/**
+            - id: chat_route
+              uri: ${CHAT_SERVICE_URI:${CHAT_SERVICE_URL:http://localhost:8083}}
+              predicates:
+                - Path=/chat/**
+            - id: message_route
+              uri: ${MESSAGE_SERVICE_URI:${MESSAGE_SERVICE_URL:http://localhost:8084}}
+              predicates:
+                - Path=/message/**
+
+gateway:
+  kafka:
+    topic:
+      chat: chat-messages
+      messageRead: message-read-event
+      messageDelete: message-delete-event
