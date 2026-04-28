@@ -13,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 import static messenger.commonlibs.Constants.USER_ID_HEADER;
 
 @RestController
@@ -35,6 +37,15 @@ public class UserController {
     @GetMapping("/me")
     public ResponseEntity<UserDetailsResponse> getCurrentUser(@RequestHeader(USER_ID_HEADER) Long userId) {
         return ResponseEntity.ok(userDetailsMapper.toDto(userDetailsService.getByUserId(userId)));
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<UserDetailsResponse>> searchUsersByTag(@RequestParam String tag) {
+        return ResponseEntity.ok(userDetailsService.searchUsersByTag(tag)
+                .stream()
+                .map(userDetailsMapper::toDto)
+                .toList()
+        );
     }
 
     @GetMapping("/exists/{userId}")

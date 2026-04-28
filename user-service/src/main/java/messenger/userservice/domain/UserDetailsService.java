@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @Service
@@ -35,12 +37,21 @@ public class UserDetailsService {
         return userDetailsRepository.existsUserDetailsByUserId(userId);
     }
 
+    @Transactional(readOnly = true)
+    public List<UserDetails> searchUsersByTag(String tag) {
+        return userDetailsRepository.findTop10ByTagIsContainingIgnoreCase(tag);
+    }
+
     @Transactional
     public UserDetails editUser(Long userId, EditUserDto dto) {
         UserDetails userDetails = getByUserId(userId);
 
         if(dto.name() != null) {
             userDetails.setName(dto.name());
+        }
+
+        if(dto.tag() != null && dto.tag().length() >= 3) {
+            userDetails.setTag(dto.tag());
         }
 
         if(dto.description() != null) {
