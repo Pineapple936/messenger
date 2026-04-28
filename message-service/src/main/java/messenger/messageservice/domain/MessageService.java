@@ -99,17 +99,20 @@ public class MessageService {
         Message message = messageRepository.findById(messageId).orElseThrow(
                 () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message with id " + messageId + " not found")
         );
-        if(isChatMember(userId, message.getChatId())) {
-            messageRepository.deleteById(messageId);
-            messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
-                    message.getId(),
-                    message.getChatId(),
-                    userId
-            ));
+
+        if (!Objects.equals(message.getUserId(), userId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Only message owner can delete this message"
+            );
         }
-        else {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
-        }
+
+        messageRepository.deleteById(messageId);
+        messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
+                message.getId(),
+                message.getChatId(),
+                userId
+        ));
     }
 
     public void deleteByChatId(Long chatId) {
