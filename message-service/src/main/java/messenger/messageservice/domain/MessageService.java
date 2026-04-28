@@ -9,17 +9,19 @@ import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
 import messenger.messageservice.kafka.MessageKafkaProducer;
 import messenger.messageservice.external.ChatHttpClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.Map;
+import java.time.Duration;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -27,8 +29,14 @@ public class MessageService {
     private final MessageRepository messageRepository;
     private final ChatHttpClient chatHttpClient;
     private final MessageKafkaProducer messageKafkaProducer;
-    private final Map<ChatUserKey, Boolean> membershipCache = new ConcurrentHashMap<>();
+    private final RedisTemplate<String, Boolean> redisTemplate;
     private final MessageMapper messageMapper;
+
+    @Value("${redis.chat.user.ttl.minute}")
+    private int chatUserKeyTtlMinutes;
+
+    @Value("${redis.chat.user.pattern}")
+    private String chatUserKeyPattern;
 
     @Transactional
     public Message saveAndPublish(MessageDto dto) {
@@ -105,22 +113,28 @@ public class MessageService {
     }
 
     public void deleteByChatId(Long chatId) {
+        String key = chatUserKeyPattern.formatted(chatId, '*');
+        Set<String> keys = redisTemplate.keys(key);
+
+        if(keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
+
         messageRepository.deleteByChatId(chatId);
     }
 
     private boolean isChatMember(Long userId, Long chatId) {
-        ChatUserKey key = new ChatUserKey(chatId, userId);
-        if (membershipCache.containsKey(key)) {
+        String key = chatUserKeyPattern.formatted(chatId, userId);
+        Boolean cache = redisTemplate.opsForValue().get(key);
+
+        if(Boolean.TRUE.equals(cache)) {
             return true;
         }
 
         boolean hasUser = chatHttpClient.hasUser(chatId, userId);
-        if (hasUser) {
-            membershipCache.put(key, true);
-        }
-        return hasUser;
-    }
 
-    private record ChatUserKey(Long chatId, Long userId) {
+        if(hasUser) redisTemplate.opsForValue().set(key, true, Duration.ofMinutes(chatUserKeyTtlMinutes));
+
+        return hasUser;
     }
 }
