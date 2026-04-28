@@ -16,7 +16,10 @@ public record CreateUserDto(
         @Size(min = 4, max = 50)
         String name,
 
-        @NonNull
+        @NotBlank
+        @Size(min = 3, max = 15)
+        String tag,
+
         @Size(max = 50)
         String description
 ) {

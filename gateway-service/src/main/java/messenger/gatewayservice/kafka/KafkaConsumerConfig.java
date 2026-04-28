@@ -1,8 +1,6 @@
 package messenger.gatewayservice.kafka;
 
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,69 +24,23 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.group-id:gateway-message-delivery}")
     private String messageGroupId;
 
-    @Value("${gateway.kafka.group.message-read:gateway-message-read-delivery}")
-    private String messageReadGroupId;
-
-    @Value("${gateway.kafka.group.message-delete:gateway-message-delete-delivery}")
-    private String messageDeleteGroupId;
-
     @Bean
-    public ConsumerFactory<String, MessageDto> messageConsumerFactory() {
+    public ConsumerFactory<String, GatewayMessageEventDto> messageEventConsumerFactory() {
         return new DefaultKafkaConsumerFactory<>(
                 baseConsumerProperties(messageGroupId),
                 new StringDeserializer(),
-                jsonDeserializer(MessageDto.class)
+                jsonDeserializer(GatewayMessageEventDto.class)
         );
     }
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, MessageDto> messageContainerFactory(
-            ConsumerFactory<String, MessageDto> messageConsumerFactory
+    public ConcurrentKafkaListenerContainerFactory<String, GatewayMessageEventDto> messageEventContainerFactory(
+            ConsumerFactory<String, GatewayMessageEventDto> messageEventConsumerFactory
     ) {
-        ConcurrentKafkaListenerContainerFactory<String, MessageDto> containerFactory =
+        ConcurrentKafkaListenerContainerFactory<String, GatewayMessageEventDto> containerFactory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         containerFactory.setConcurrency(1);
-        containerFactory.setConsumerFactory(messageConsumerFactory);
-        return containerFactory;
-    }
-
-    @Bean
-    public ConsumerFactory<String, MessageReadEventDto> messageReadConsumerFactory() {
-        return new DefaultKafkaConsumerFactory<>(
-                baseConsumerProperties(messageReadGroupId),
-                new StringDeserializer(),
-                jsonDeserializer(MessageReadEventDto.class)
-        );
-    }
-
-    @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, MessageReadEventDto> messageReadContainerFactory(
-            ConsumerFactory<String, MessageReadEventDto> messageReadConsumerFactory
-    ) {
-        ConcurrentKafkaListenerContainerFactory<String, MessageReadEventDto> containerFactory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-        containerFactory.setConcurrency(1);
-        containerFactory.setConsumerFactory(messageReadConsumerFactory);
-        return containerFactory;
-    }
-
-    @Bean
-    public ConsumerFactory<String, MessageDeleteEventDto> messageDeleteConsumerFactory() {
-        return new DefaultKafkaConsumerFactory<>(
-                baseConsumerProperties(messageDeleteGroupId),
-                new StringDeserializer(),
-                jsonDeserializer(MessageDeleteEventDto.class)
-        );
-    }
-
-    @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, MessageDeleteEventDto> messageDeleteContainerFactory(
-            ConsumerFactory<String, MessageDeleteEventDto> messageDeleteConsumerFactory
-    ) {
-        ConcurrentKafkaListenerContainerFactory<String, MessageDeleteEventDto> containerFactory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-        containerFactory.setConcurrency(1);
-        containerFactory.setConsumerFactory(messageDeleteConsumerFactory);
+        containerFactory.setConsumerFactory(messageEventConsumerFactory);
         return containerFactory;
     }
 

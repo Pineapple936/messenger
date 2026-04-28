@@ -43,6 +43,7 @@ public class UserCredentialService {
         userHttpClient.createUser(CreateUserDto.builder()
                 .id(userCredential.getId())
                 .name(dto.name())
+                .tag(dto.tag())
                 .description(dto.description())
                 .build()
         );

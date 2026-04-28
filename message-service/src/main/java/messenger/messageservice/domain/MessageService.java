@@ -3,23 +3,27 @@ package messenger.messageservice.domain;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
+import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.messageservice.api.dto.MessageEditDto;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
 import messenger.messageservice.kafka.MessageKafkaProducer;
 import messenger.messageservice.external.ChatHttpClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.Map;
+import java.time.Duration;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -27,8 +31,14 @@ public class MessageService {
     private final MessageRepository messageRepository;
     private final ChatHttpClient chatHttpClient;
     private final MessageKafkaProducer messageKafkaProducer;
-    private final Map<ChatUserKey, Boolean> membershipCache = new ConcurrentHashMap<>();
+    private final RedisTemplate<String, Boolean> redisTemplate;
     private final MessageMapper messageMapper;
+
+    @Value("${redis.chat.user.ttl.minute}")
+    private int chatUserKeyTtlMinutes;
+
+    @Value("${redis.chat.user.pattern}")
+    private String chatUserKeyPattern;
 
     @Transactional
     public Message saveAndPublish(MessageDto dto) {
@@ -40,6 +50,12 @@ public class MessageService {
         Message saved = messageRepository.save(message);
         messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved));
         return saved;
+    }
+
+    public Message findById(String id) {
+        return messageRepository.findById(id).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found with id: " + id)
+        );
     }
 
     public Slice<MessageResponse> getSlice(Long userId, Long chatId, Integer limit, Integer offset) {
@@ -54,9 +70,7 @@ public class MessageService {
 
     @Transactional
     public void readMessageById(Long userId, String messageId) {
-        Message message = messageRepository.findById(messageId).orElseThrow(
-                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found with id: " + messageId)
-        );
+        Message message = findById(messageId);
 
         if(isChatMember(userId, message.getChatId())) {
             if (Objects.equals(message.getUserId(), userId)) {
@@ -87,40 +101,72 @@ public class MessageService {
     }
 
     @Transactional
-    public void deleteById(Long userId, String messageId) {
-        Message message = messageRepository.findById(messageId).orElseThrow(
-                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message with id " + messageId + " not found")
-        );
-        if(isChatMember(userId, message.getChatId())) {
-            messageRepository.deleteById(messageId);
-            messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
-                    message.getId(),
-                    message.getChatId(),
-                    userId
-            ));
+    public Message editMessageById(Long userId, MessageEditDto dto) {
+        Message message = findById(dto.id());
+
+        if(!Objects.equals(message.getUserId(), userId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Only message owner can edit this message"
+            );
         }
-        else {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
-        }
+
+        message.setContent(dto.content());
+        message.setEditStatus(true);
+        Message saved = messageRepository.save(message);
+        messageKafkaProducer.sendEditEvent(new MessageEditEventDto(
+                saved.getId(),
+                saved.getChatId(),
+                saved.getContent(),
+                saved.getEditStatus()
+        ));
+        return saved;
     }
 
+    @Transactional
+    public void deleteById(Long userId, String messageId) {
+        Message message = findById(messageId);
+
+        if (!Objects.equals(message.getUserId(), userId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Only message owner can delete this message"
+            );
+        }
+
+        messageRepository.deleteById(messageId);
+        messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
+                message.getId(),
+                message.getChatId(),
+                userId
+        ));
+    }
+
+    @Transactional
     public void deleteByChatId(Long chatId) {
+        String key = chatUserKeyPattern.formatted(chatId, '*');
+        Set<String> keys = redisTemplate.keys(key);
+
+        if(keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
+
         messageRepository.deleteByChatId(chatId);
     }
 
     private boolean isChatMember(Long userId, Long chatId) {
-        ChatUserKey key = new ChatUserKey(chatId, userId);
-        if (membershipCache.containsKey(key)) {
+        String key = chatUserKeyPattern.formatted(chatId, userId);
+        Boolean cache = redisTemplate.opsForValue().get(key);
+
+        if(Boolean.TRUE.equals(cache)) {
+            redisTemplate.expire(key, Duration.ofMinutes(chatUserKeyTtlMinutes));
             return true;
         }
 
         boolean hasUser = chatHttpClient.hasUser(chatId, userId);
-        if (hasUser) {
-            membershipCache.put(key, true);
-        }
-        return hasUser;
-    }
 
-    private record ChatUserKey(Long chatId, Long userId) {
+        if(hasUser) redisTemplate.opsForValue().set(key, true, Duration.ofMinutes(chatUserKeyTtlMinutes));
+
+        return hasUser;
     }
 }

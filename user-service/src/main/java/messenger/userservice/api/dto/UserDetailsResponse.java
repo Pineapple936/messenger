@@ -10,6 +10,9 @@ public record UserDetailsResponse(
         Long userId,
 
         @NotBlank
+        String tag,
+
+        @NotBlank
         String name,
 
         String description

@@ -1,8 +1,7 @@
 package messenger.messageservice.kafka;
 
 import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,7 +37,7 @@ public class KafkaProducerConfig {
     }
 
     @Bean
-    public ProducerFactory<String, MessageReadEventDto> messageReadEventProducerFactory() {
+    public ProducerFactory<String, GatewayMessageEventDto> gatewayMessageEventProducerFactory() {
         return new DefaultKafkaProducerFactory<>(
                 baseProducerProperties(),
                 new StringSerializer(),
@@ -47,26 +46,10 @@ public class KafkaProducerConfig {
     }
 
     @Bean
-    public KafkaTemplate<String, MessageReadEventDto> messageReadEventKafkaTemplate(
-            ProducerFactory<String, MessageReadEventDto> messageReadEventProducerFactory
+    public KafkaTemplate<String, GatewayMessageEventDto> gatewayMessageEventKafkaTemplate(
+            ProducerFactory<String, GatewayMessageEventDto> gatewayMessageEventProducerFactory
     ) {
-        return new KafkaTemplate<>(messageReadEventProducerFactory);
-    }
-
-    @Bean
-    public ProducerFactory<String, MessageDeleteEventDto> messageDeleteEventProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(
-                baseProducerProperties(),
-                new StringSerializer(),
-                jsonSerializer()
-        );
-    }
-
-    @Bean
-    public KafkaTemplate<String, MessageDeleteEventDto> messageDeleteEventKafkaTemplate(
-            ProducerFactory<String, MessageDeleteEventDto> messageDeleteEventProducerFactory
-    ) {
-        return new KafkaTemplate<>(messageDeleteEventProducerFactory);
+        return new KafkaTemplate<>(gatewayMessageEventProducerFactory);
     }
 
     private Map<String, Object> baseProducerProperties() {

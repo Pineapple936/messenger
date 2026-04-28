@@ -18,6 +18,10 @@ public record UserRegistrationDto (
         @Size(min = 4, max = 50)
         String name,
 
+        @NotBlank
+        @Size(min = 3, max =15)
+        String tag,
+
         @Size(max = 50)
         String description
 ){

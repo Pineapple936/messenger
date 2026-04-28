@@ -1,9 +1,7 @@
 package messenger.messageservice.kafka;
 
 import lombok.RequiredArgsConstructor;
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.messageservice.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -11,28 +9,42 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class MessageKafkaProducer {
-    private final KafkaTemplate<String, MessageDto> messageKafkaTemplate;
-    private final KafkaTemplate<String, MessageReadEventDto> messageReadEventKafkaTemplate;
-    private final KafkaTemplate<String, MessageDeleteEventDto> messageDeleteEventKafkaTemplate;
+    private final KafkaTemplate<String, MessageDto> chatMessageKafkaTemplate;
+    private final KafkaTemplate<String, GatewayMessageEventDto> gatewayMessageEventKafkaTemplate;
 
     @Value("${kafka.topic.chat:chat-messages}")
     private String chatTopic;
 
-    @Value("${kafka.topic.messageRead:message-read-event}")
-    private String readMessageTopic;
-
-    @Value("${kafka.topic.messageDelete:message-delete-event}")
-    private String messageDeleteTopic;
+    @Value("${kafka.topic.gateway.messageEvents:gateway-message-events}")
+    private String gatewayMessageEventsTopic;
 
     public void sendMessageToKafka(MessageDto messageDto) {
-        messageKafkaTemplate.send(chatTopic, String.valueOf(messageDto.chatId()), messageDto);
+        String key = String.valueOf(messageDto.chatId());
+        chatMessageKafkaTemplate.send(chatTopic, key, messageDto);
+        gatewayMessageEventKafkaTemplate.send(gatewayMessageEventsTopic, key, GatewayMessageEventDto.messageCreated(messageDto));
     }
 
     public void sendReadEvent(MessageReadEventDto messageReadEventDto) {
-        messageReadEventKafkaTemplate.send(readMessageTopic, String.valueOf(messageReadEventDto.chatId()), messageReadEventDto);
+        gatewayMessageEventKafkaTemplate.send(
+                gatewayMessageEventsTopic,
+                String.valueOf(messageReadEventDto.chatId()),
+                GatewayMessageEventDto.messageRead(messageReadEventDto)
+        );
+    }
+
+    public void sendEditEvent(MessageEditEventDto messageEditEventDto) {
+        gatewayMessageEventKafkaTemplate.send(
+                gatewayMessageEventsTopic,
+                String.valueOf(messageEditEventDto.chatId()),
+                GatewayMessageEventDto.messageEdit(messageEditEventDto)
+        );
     }
 
     public void sendDeleteEvent(MessageDeleteEventDto messageDeleteEventDto) {
-        messageDeleteEventKafkaTemplate.send(messageDeleteTopic, String.valueOf(messageDeleteEventDto.chatId()), messageDeleteEventDto);
+        gatewayMessageEventKafkaTemplate.send(
+                gatewayMessageEventsTopic,
+                String.valueOf(messageDeleteEventDto.chatId()),
+                GatewayMessageEventDto.messageDeleted(messageDeleteEventDto)
+        );
     }
 }

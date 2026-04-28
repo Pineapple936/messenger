@@ -25,6 +25,9 @@ public record MessageResponse(
         Boolean readStatus,
 
         @NotNull
+        Boolean editStatus,
+
+        @NotNull
         LocalDateTime sendAt
 ) {
 }

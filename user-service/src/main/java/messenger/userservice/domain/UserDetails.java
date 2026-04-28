@@ -17,6 +17,7 @@ public class UserDetails {
     UserDetails(CreateUserDto dto) {
         userId = dto.id();
         name = dto.name();
+        tag = dto.tag();
         description = dto.description();
     }
 
@@ -26,6 +27,9 @@ public class UserDetails {
 
     @Column(name = "user_id", nullable = false, unique = true)
     private Long userId;
+
+    @Column(name = "tag", nullable = false, unique = true, length = 15)
+    private String tag;
 
     @Column(name = "name", nullable = false, length = 50)
     private String name;
