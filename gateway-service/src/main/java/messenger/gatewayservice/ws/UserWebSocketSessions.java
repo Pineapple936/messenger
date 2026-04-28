@@ -11,7 +11,7 @@ import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Sinks;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -325,7 +325,7 @@ public class UserWebSocketSessions {
             Long userId,
             String content,
             Boolean editStatus,
-            LocalDateTime sendAt
+            Instant sendAt
     ) {
     }
 

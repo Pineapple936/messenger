@@ -1,5 +1,6 @@
 package messenger.userservice.api;
 
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import jakarta.validation.Valid;
@@ -48,9 +49,14 @@ public class UserController {
         );
     }
 
-    @GetMapping("/exists/{userId}")
+    @GetMapping("/exists/user/{userId}")
     public ResponseEntity<Boolean> existsUserById(@PathVariable @Positive Long userId) {
         return ResponseEntity.ok(userDetailsService.existsUserById(userId));
+    }
+
+    @PostMapping("/exists/users")
+    public ResponseEntity<List<Long>> existsUsersById(@RequestBody @NotNull List<Long> usersId) {
+        return ResponseEntity.ok(userDetailsService.existsUsersById(usersId));
     }
 
     @PostMapping("/edit")

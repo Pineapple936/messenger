@@ -10,7 +10,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Data
 @Document(collection = "message")
@@ -53,7 +53,7 @@ public class Message {
 
     @Field(name = "send_at")
     @NonNull
-    private LocalDateTime sendAt;
+    private Instant sendAt;
 
     @Field(name = "replied_message")
     private Message repliedMessage;

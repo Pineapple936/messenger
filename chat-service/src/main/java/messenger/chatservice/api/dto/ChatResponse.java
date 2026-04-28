@@ -1,11 +1,20 @@
 package messenger.chatservice.api.dto;
 
-import java.time.LocalDateTime;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+
+import java.time.Instant;
 
 public record ChatResponse(
-        Long id,
-        Long userId1,
-        Long userId2,
-        LocalDateTime lastMessageAt
+        @Positive
+        @NotNull
+        Long chatId,
+
+        @NotBlank
+        String chatName,
+
+        @NotNull
+        Instant lastMessageAt
 ) {
 }

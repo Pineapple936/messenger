@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import lombok.Builder;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Builder
 public record MessageDto(
@@ -30,7 +30,7 @@ public record MessageDto(
         Boolean editStatus,
 
         @NotNull
-        LocalDateTime sendAt,
+        Instant sendAt,
 
         @Pattern(regexp = "^$|\\S.*")
         String repliedMessageId

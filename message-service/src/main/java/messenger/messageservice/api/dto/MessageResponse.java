@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Positive;
 import messenger.commonlibs.dto.messageservice.ReactionOnMessage;
 import messenger.messageservice.domain.Message;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Set;
 
 public record MessageResponse(
@@ -31,7 +31,7 @@ public record MessageResponse(
         Boolean editStatus,
 
         @NotNull
-        LocalDateTime sendAt,
+        Instant sendAt,
 
         @NotNull
         Set<ReactionOnMessage> reactions,

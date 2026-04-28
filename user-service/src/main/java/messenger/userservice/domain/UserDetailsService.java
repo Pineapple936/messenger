@@ -34,7 +34,12 @@ public class UserDetailsService {
 
     @Transactional(readOnly = true)
     public Boolean existsUserById(Long userId) {
-        return userDetailsRepository.existsUserDetailsByUserId(userId);
+        return userDetailsRepository.existsByUserId(userId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> existsUsersById(List<Long> usersId) {
+        return userDetailsRepository.findExistingIds(usersId);
     }
 
     @Transactional(readOnly = true)
