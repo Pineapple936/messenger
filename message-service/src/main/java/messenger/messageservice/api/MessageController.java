@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.messageservice.api.dto.CreateMessage;
+import messenger.messageservice.api.dto.MessageEditDto;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.mapper.MessageMapper;
@@ -34,6 +35,7 @@ public class MessageController {
                 .userId(userId)
                 .content(request.content())
                 .readStatus(false)
+                .editStatus(false)
                 .sendAt(request.sendAt())
                 .build();
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toResponse(messageService.saveAndPublish(dto)));
@@ -45,6 +47,12 @@ public class MessageController {
                                                              @RequestParam(defaultValue = "50") Integer limit,
                                                              @RequestParam(defaultValue = "0") Integer offset) {
         return ResponseEntity.ok(messageService.getSlice(userId, chatId, limit, offset));
+    }
+
+    @PutMapping("/edit")
+    public ResponseEntity<MessageResponse> editMessageById(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                           @Valid @RequestBody MessageEditDto dto) {
+        return ResponseEntity.ok(messageMapper.toResponse(messageService.editMessageById(userId, dto)));
     }
 
     @PutMapping("/read/{messageId}")

@@ -41,6 +41,15 @@ public class GatewayMessageEventHandler {
                     }
                 }
             }
+            case MESSAGE_EDIT -> {
+                if (messageEvent.messageEditEvent() == null) {
+                    log.warn("Received MESSAGE_EDIT event without payload for chatId={}", messageEvent.chatId());
+                    return;
+                }
+                for (Long userId : users) {
+                    userWebSocketSessions.pushMessageEditToUser(userId, messageEvent.messageEditEvent());
+                }
+            }
             case MESSAGE_DELETED -> {
                 if (messageEvent.messageDeleteEvent() == null) {
                     log.warn("Received MESSAGE_DELETED event without payload for chatId={}", messageEvent.chatId());

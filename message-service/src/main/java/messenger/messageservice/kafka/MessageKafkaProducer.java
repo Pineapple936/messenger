@@ -1,10 +1,7 @@
 package messenger.messageservice.kafka;
 
 import lombok.RequiredArgsConstructor;
-import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.messageservice.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -32,6 +29,14 @@ public class MessageKafkaProducer {
                 gatewayMessageEventsTopic,
                 String.valueOf(messageReadEventDto.chatId()),
                 GatewayMessageEventDto.messageRead(messageReadEventDto)
+        );
+    }
+
+    public void sendEditEvent(MessageEditEventDto messageEditEventDto) {
+        gatewayMessageEventKafkaTemplate.send(
+                gatewayMessageEventsTopic,
+                String.valueOf(messageEditEventDto.chatId()),
+                GatewayMessageEventDto.messageEdit(messageEditEventDto)
         );
     }
 

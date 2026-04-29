@@ -3,7 +3,9 @@ package messenger.messageservice.domain;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
+import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.messageservice.api.dto.MessageEditDto;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
@@ -50,6 +52,12 @@ public class MessageService {
         return saved;
     }
 
+    public Message findById(String id) {
+        return messageRepository.findById(id).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found with id: " + id)
+        );
+    }
+
     public Slice<MessageResponse> getSlice(Long userId, Long chatId, Integer limit, Integer offset) {
         if (!isChatMember(userId, chatId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
@@ -62,9 +70,7 @@ public class MessageService {
 
     @Transactional
     public void readMessageById(Long userId, String messageId) {
-        Message message = messageRepository.findById(messageId).orElseThrow(
-                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found with id: " + messageId)
-        );
+        Message message = findById(messageId);
 
         if(isChatMember(userId, message.getChatId())) {
             if (Objects.equals(message.getUserId(), userId)) {
@@ -95,10 +101,31 @@ public class MessageService {
     }
 
     @Transactional
+    public Message editMessageById(Long userId, MessageEditDto dto) {
+        Message message = findById(dto.id());
+
+        if(!Objects.equals(message.getUserId(), userId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Only message owner can edit this message"
+            );
+        }
+
+        message.setContent(dto.content());
+        message.setEditStatus(true);
+        Message saved = messageRepository.save(message);
+        messageKafkaProducer.sendEditEvent(new MessageEditEventDto(
+                saved.getId(),
+                saved.getChatId(),
+                saved.getContent(),
+                saved.getEditStatus()
+        ));
+        return saved;
+    }
+
+    @Transactional
     public void deleteById(Long userId, String messageId) {
-        Message message = messageRepository.findById(messageId).orElseThrow(
-                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message with id " + messageId + " not found")
-        );
+        Message message = findById(messageId);
 
         if (!Objects.equals(message.getUserId(), userId)) {
             throw new ResponseStatusException(
@@ -115,6 +142,7 @@ public class MessageService {
         ));
     }
 
+    @Transactional
     public void deleteByChatId(Long chatId) {
         String key = chatUserKeyPattern.formatted(chatId, '*');
         Set<String> keys = redisTemplate.keys(key);

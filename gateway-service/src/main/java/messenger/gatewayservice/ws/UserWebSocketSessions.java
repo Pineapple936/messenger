@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
+import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Sinks;
@@ -85,7 +86,8 @@ public class UserWebSocketSessions {
                 messageDto.id(),
                 messageDto.chatId(),
                 messageDto.userId(),
-                messageDto.content()
+                messageDto.content(),
+                messageDto.editStatus()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -123,6 +125,25 @@ public class UserWebSocketSessions {
                 messageDeleteEventDto.id(),
                 messageDeleteEventDto.chatId(),
                 messageDeleteEventDto.deletedByUserId()
+        ));
+
+        for (Sinks.Many<String> sink : userSinks) {
+            emitToSink(sink, payload);
+        }
+    }
+
+    public void pushMessageEditToUser(Long userId, MessageEditEventDto messageEditEventDto) {
+        Set<Sinks.Many<String>> userSinks = sessions.get(userId);
+        if (userSinks == null || userSinks.isEmpty()) {
+            return;
+        }
+
+        String payload = toJsonSafe(new OutgoingMessageEditEvent(
+                "message_edit",
+                messageEditEventDto.id(),
+                messageEditEventDto.chatId(),
+                messageEditEventDto.content(),
+                messageEditEventDto.editStatus()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -275,7 +296,14 @@ public class UserWebSocketSessions {
         }
     }
 
-    private record OutgoingMessageEvent(String type, String id, Long chatId, Long userId, String content) {
+    private record OutgoingMessageEvent(
+            String type,
+            String id,
+            Long chatId,
+            Long userId,
+            String content,
+            Boolean editStatus
+    ) {
     }
 
     private record OutgoingMessageReadEvent(
@@ -292,6 +320,15 @@ public class UserWebSocketSessions {
             String id,
             Long chatId,
             Long deletedByUserId
+    ) {
+    }
+
+    private record OutgoingMessageEditEvent(
+            String type,
+            String id,
+            Long chatId,
+            String content,
+            Boolean editStatus
     ) {
     }
 

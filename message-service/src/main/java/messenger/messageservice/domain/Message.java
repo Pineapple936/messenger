@@ -20,7 +20,8 @@ public class Message {
         chatId = dto.chatId();
         userId = dto.userId();
         content = dto.content();
-        readStatus = false;
+        readStatus = dto.readStatus();
+        editStatus = dto.editStatus();
         sendAt = dto.sendAt();
     }
 
@@ -43,7 +44,11 @@ public class Message {
 
     @Field(name = "read_status")
     @NonNull
-    private Boolean readStatus = false;
+    private Boolean readStatus;
+
+    @Field(name = "edit_status")
+    @NonNull
+    private Boolean editStatus = false;
 
     @Field(name = "send_at")
     @NonNull
