@@ -67,6 +67,4 @@ spring:
 gateway:
   kafka:
     topic:
-      chat: chat-messages
-      messageRead: message-read-event
-      messageDelete: message-delete-event
+      messageEvents: gateway-message-events
