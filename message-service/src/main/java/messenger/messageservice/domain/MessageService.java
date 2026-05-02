@@ -159,6 +159,7 @@ public class MessageService {
         Boolean cache = redisTemplate.opsForValue().get(key);
 
         if(Boolean.TRUE.equals(cache)) {
+            redisTemplate.expire(key, Duration.ofMinutes(chatUserKeyTtlMinutes));
             return true;
         }
 
