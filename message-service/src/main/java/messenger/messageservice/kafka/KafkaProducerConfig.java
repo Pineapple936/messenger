@@ -1,5 +1,6 @@
 package messenger.messageservice.kafka;
 
+import messenger.commonlibs.dto.messageservice.DeleteMessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -19,6 +20,22 @@ import java.util.Map;
 public class KafkaProducerConfig {
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
+
+    @Bean
+    public ProducerFactory<String, DeleteMessageDto> messageDeleteProducerFactory() {
+        return new DefaultKafkaProducerFactory<>(
+                baseProducerProperties(),
+                new StringSerializer(),
+                jsonSerializer()
+        );
+    }
+
+    @Bean
+    public KafkaTemplate<String, DeleteMessageDto> messageDeleteKafkaTemplate(
+            ProducerFactory<String, DeleteMessageDto> messageProducerFactory
+    ) {
+        return new KafkaTemplate<>(messageProducerFactory);
+    }
 
     @Bean
     public ProducerFactory<String, MessageDto> messageProducerFactory() {

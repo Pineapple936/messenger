@@ -7,6 +7,7 @@ import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
 import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Sinks;
 
@@ -144,6 +145,25 @@ public class UserWebSocketSessions {
                 messageEditEventDto.chatId(),
                 messageEditEventDto.content(),
                 messageEditEventDto.editStatus()
+        ));
+
+        for (Sinks.Many<String> sink : userSinks) {
+            emitToSink(sink, payload);
+        }
+    }
+
+    public void pushReactionToUser(Long userId, GatewayReactionEventDto reactionEvent) {
+        Set<Sinks.Many<String>> userSinks = sessions.get(userId);
+        if (userSinks == null || userSinks.isEmpty()) {
+            return;
+        }
+
+        String payload = toJsonSafe(new OutgoingReactionEvent(
+                reactionEvent.type().name().toLowerCase(),
+                reactionEvent.chatId(),
+                reactionEvent.messageId(),
+                reactionEvent.userId(),
+                reactionEvent.reactionType()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -333,5 +353,14 @@ public class UserWebSocketSessions {
     }
 
     private record OutgoingPresenceEvent(String type, Long userId, boolean online) {
+    }
+
+    private record OutgoingReactionEvent(
+            String type,
+            Long chatId,
+            String messageId,
+            Long userId,
+            String reactionType
+    ) {
     }
 }

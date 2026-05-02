@@ -3,8 +3,11 @@ package messenger.messageservice.api.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import messenger.commonlibs.dto.messageservice.ReactionOnMessage;
+import messenger.messageservice.domain.Message;
 
 import java.time.LocalDateTime;
+import java.util.Set;
 
 public record MessageResponse(
         @NotBlank
@@ -28,6 +31,12 @@ public record MessageResponse(
         Boolean editStatus,
 
         @NotNull
-        LocalDateTime sendAt
+        LocalDateTime sendAt,
+
+        @NotNull
+        Set<ReactionOnMessage> reactions
 ) {
+        public MessageResponse(Message message, Set<ReactionOnMessage> list) {
+            this(message.getId(), message.getChatId(), message.getUserId(), message.getContent(), message.getReadStatus(), message.getEditStatus(), message.getSendAt(), list);
+        }
 }

@@ -15,10 +15,10 @@ public class ChatHttpClientConfig {
     }
 
     @Bean
-    ChatHttpClient chatHttpClient(RestClient restClient) {
+    ChatHttpClient chatHttpClient(RestClient chatRestClient) {
         return HttpServiceProxyFactory
                 .builder()
-                .exchangeAdapter(RestClientAdapter.create(restClient))
+                .exchangeAdapter(RestClientAdapter.create(chatRestClient))
                 .build()
                 .createClient(ChatHttpClient.class);
     }

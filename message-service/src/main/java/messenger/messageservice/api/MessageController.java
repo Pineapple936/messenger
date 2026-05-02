@@ -27,7 +27,7 @@ public class MessageController {
     private final MessageMapper messageMapper;
 
     @PostMapping
-    public ResponseEntity<MessageResponse> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
+    public ResponseEntity<MessageDto> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
                                                       @RequestBody @Valid CreateMessage request) {
         MessageDto dto = MessageDto
                 .builder()
@@ -38,7 +38,7 @@ public class MessageController {
                 .editStatus(false)
                 .sendAt(request.sendAt())
                 .build();
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toResponse(messageService.saveAndPublish(dto)));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toDto(messageService.saveAndPublish(dto)));
     }
 
     @GetMapping("/chat/{chatId}")
@@ -49,10 +49,16 @@ public class MessageController {
         return ResponseEntity.ok(messageService.getSlice(userId, chatId, limit, offset));
     }
 
+    @GetMapping("/{messageId}/exists/{userId}")
+    public ResponseEntity<Boolean> isMessageOwner(@PathVariable String messageId,
+                                                  @PathVariable Long userId) {
+        return ResponseEntity.ok(messageService.isMessageOwner(userId, messageId));
+    }
+
     @PutMapping("/edit")
-    public ResponseEntity<MessageResponse> editMessageById(@RequestHeader(USER_ID_HEADER) Long userId,
+    public ResponseEntity<MessageDto> editMessageById(@RequestHeader(USER_ID_HEADER) Long userId,
                                                            @Valid @RequestBody MessageEditDto dto) {
-        return ResponseEntity.ok(messageMapper.toResponse(messageService.editMessageById(userId, dto)));
+        return ResponseEntity.ok(messageMapper.toDto(messageService.editMessageById(userId, dto)));
     }
 
     @PutMapping("/read/{messageId}")

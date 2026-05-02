@@ -1,6 +1,7 @@
 package messenger.gatewayservice.kafka;
 
 import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
+import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +25,9 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.group-id:gateway-message-delivery}")
     private String messageGroupId;
 
+    @Value("${kafka.consumer.group-id.reactionEvents:gateway-reaction-delivery}")
+    private String reactionGroupId;
+
     @Bean
     public ConsumerFactory<String, GatewayMessageEventDto> messageEventConsumerFactory() {
         return new DefaultKafkaConsumerFactory<>(
@@ -41,6 +45,26 @@ public class KafkaConsumerConfig {
                 new ConcurrentKafkaListenerContainerFactory<>();
         containerFactory.setConcurrency(1);
         containerFactory.setConsumerFactory(messageEventConsumerFactory);
+        return containerFactory;
+    }
+
+    @Bean
+    public ConsumerFactory<String, GatewayReactionEventDto> reactionEventConsumerFactory() {
+        return new DefaultKafkaConsumerFactory<>(
+                baseConsumerProperties(reactionGroupId),
+                new StringDeserializer(),
+                jsonDeserializer(GatewayReactionEventDto.class)
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, GatewayReactionEventDto> reactionEventContainerFactory(
+            ConsumerFactory<String, GatewayReactionEventDto> reactionEventConsumerFactory
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, GatewayReactionEventDto> containerFactory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        containerFactory.setConcurrency(1);
+        containerFactory.setConsumerFactory(reactionEventConsumerFactory);
         return containerFactory;
     }
 

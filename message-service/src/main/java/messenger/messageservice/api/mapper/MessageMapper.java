@@ -8,6 +8,5 @@ import org.mapstruct.Mapper;
 
 @Mapper(config = CommonMapperConfig.class)
 public interface MessageMapper {
-    MessageResponse toResponse(Message message);
     MessageDto toDto(Message message);
 }
