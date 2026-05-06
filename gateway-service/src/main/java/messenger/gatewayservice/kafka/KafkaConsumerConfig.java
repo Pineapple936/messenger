@@ -28,6 +28,9 @@ public class KafkaConsumerConfig {
     @Value("${kafka.consumer.group-id.reactionEvents:gateway-reaction-delivery}")
     private String reactionGroupId;
 
+    @Value("${spring.kafka.consumer.auto-offset-reset:earliest}")
+    private String autoOffsetReset;
+
     @Bean
     public ConsumerFactory<String, GatewayMessageEventDto> messageEventConsumerFactory() {
         return new DefaultKafkaConsumerFactory<>(
@@ -72,7 +75,7 @@ public class KafkaConsumerConfig {
         Map<String, Object> properties = new HashMap<>();
         properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         properties.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
         return properties;
     }
 

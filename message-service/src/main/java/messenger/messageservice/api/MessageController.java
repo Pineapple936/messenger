@@ -16,6 +16,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.Set;
+
 import static messenger.commonlibs.Constants.USER_ID_HEADER;
 
 @Validated
@@ -27,8 +30,8 @@ public class MessageController {
     private final MessageMapper messageMapper;
 
     @PostMapping
-    public ResponseEntity<MessageDto> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
-                                                 @RequestBody @Valid CreateMessage request) {
+    public ResponseEntity<MessageResponse> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                      @RequestBody @Valid CreateMessage request) {
         MessageDto dto = MessageDto
                 .builder()
                 .chatId(request.chatId())
@@ -36,10 +39,10 @@ public class MessageController {
                 .content(request.content())
                 .readStatus(false)
                 .editStatus(false)
-                .sendAt(request.sendAt())
-                .repliedMessageId(request.repliedMessageId())
+                .sendAt(LocalDateTime.now())
+                .repliedMessageId(request.repliedMessageId() != null ? request.repliedMessageId() : "")
                 .build();
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toDto(messageService.saveAndPublish(dto)));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(messageService.saveAndPublish(dto), Set.of()));
     }
 
     @GetMapping("/chat/{chatId}")

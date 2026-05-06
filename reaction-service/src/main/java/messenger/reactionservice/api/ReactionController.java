@@ -37,9 +37,12 @@ public class ReactionController {
     }
 
     @PostMapping("/message/batchByUser")
-    public ResponseEntity<ReactionsOnMessageListResponse> batchReactionsByUserIdAndMessageIds(@Valid @RequestBody ReactionsOnMessageListRequest dto) {
+    public ResponseEntity<ReactionsOnMessageListResponse> batchReactionsByUserIdAndMessageIds(
+            @RequestHeader(value = USER_ID_HEADER, required = false) Long headerUserId,
+            @Valid @RequestBody ReactionsOnMessageListRequest dto) {
+        Long userId = headerUserId != null ? headerUserId : dto.userId();
         return ResponseEntity.ok(
-                new ReactionsOnMessageListResponse(reactionService.batchReactionsByUserIdAndMessageIds(dto.userId(), dto.messageIds()))
+                new ReactionsOnMessageListResponse(reactionService.batchReactionsByUserIdAndMessageIds(userId, dto.messageIds()))
         );
     }
 

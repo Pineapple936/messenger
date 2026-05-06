@@ -87,9 +87,10 @@ public class ChatService {
     @Transactional
     public void deleteByUserId(Long userId) {
         List<Chat> chats = chatRepository.findAllByUserId(userId);
-        for(Chat chat: chats) {
-            chatRepository.delete(chat);
-            chatKafkaProducer.sendMessageToKafka(new DeleteChatDto(chat.getId()));
+        if (chats.isEmpty()) {
+            return;
         }
+        chatRepository.deleteAllInBatch(chats);
+        chats.forEach(chat -> chatKafkaProducer.sendMessageToKafka(new DeleteChatDto(chat.getId())));
     }
 }

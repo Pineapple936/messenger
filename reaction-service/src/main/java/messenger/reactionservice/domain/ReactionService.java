@@ -30,9 +30,15 @@ public class ReactionService {
 
     @Transactional
     public Reaction add(Long userId, CreateReactionDto dto) {
-        if (detailsRepository.countByMessageIdAndUserId(dto.messageId(), userId) >= 3) {
+        List<ReactionDetails> existing = detailsRepository.findByUserIdAndMessageIdForUpdate(userId, dto.messageId());
+        if (existing.size() >= 3) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Max 3 reactions userId" + userId + " messageId=" + dto.messageId());
+                    "Max 3 reactions userId=" + userId + " messageId=" + dto.messageId());
+        }
+        boolean alreadyReacted = existing.stream()
+                .anyMatch(r -> r.getReactionType() == dto.reactionType());
+        if (alreadyReacted) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Reaction already exists");
         }
 
         try {

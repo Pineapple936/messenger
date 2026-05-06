@@ -34,9 +34,26 @@ public record MessageResponse(
         LocalDateTime sendAt,
 
         @NotNull
-        Set<ReactionOnMessage> reactions
+        Set<ReactionOnMessage> reactions,
+
+        RepliedMessageInfo repliedMessage
 ) {
-        public MessageResponse(Message message, Set<ReactionOnMessage> list) {
-            this(message.getId(), message.getChatId(), message.getUserId(), message.getContent(), message.getReadStatus(), message.getEditStatus(), message.getSendAt(), list);
+        public MessageResponse(Message message, Set<ReactionOnMessage> reactions) {
+            this(
+                message.getId(),
+                message.getChatId(),
+                message.getUserId(),
+                message.getContent(),
+                message.getReadStatus(),
+                message.getEditStatus(),
+                message.getSendAt(),
+                reactions,
+                message.getRepliedMessage() == null ? null : new RepliedMessageInfo(
+                    message.getRepliedMessage().getId(),
+                    message.getRepliedMessage().getUserId(),
+                    message.getRepliedMessage().getContent(),
+                    message.getRepliedMessage().getSendAt()
+                )
+            );
         }
 }
