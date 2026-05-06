@@ -20,7 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -47,7 +46,7 @@ public class MessageService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
         }
 
-        Message message = new Message(dto);
+        Message message = new Message(dto, messageRepository.findById(dto.repliedMessageId()).orElse(null));
         Message saved = messageRepository.save(message);
         messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved));
         return saved;

@@ -28,7 +28,7 @@ public class MessageController {
 
     @PostMapping
     public ResponseEntity<MessageDto> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
-                                                      @RequestBody @Valid CreateMessage request) {
+                                                 @RequestBody @Valid CreateMessage request) {
         MessageDto dto = MessageDto
                 .builder()
                 .chatId(request.chatId())
@@ -37,6 +37,7 @@ public class MessageController {
                 .readStatus(false)
                 .editStatus(false)
                 .sendAt(request.sendAt())
+                .repliedMessageId(request.repliedMessageId())
                 .build();
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toDto(messageService.saveAndPublish(dto)));
     }
