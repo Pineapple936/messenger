@@ -1,14 +1,12 @@
 package messenger.messageservice.domain;
 
 import lombok.RequiredArgsConstructor;
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.messageservice.*;
 import messenger.messageservice.api.dto.MessageEditDto;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
+import messenger.messageservice.external.ReactionHttpClient;
 import messenger.messageservice.kafka.MessageKafkaProducer;
 import messenger.messageservice.external.ChatHttpClient;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,14 +20,19 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class MessageService {
     private final MessageRepository messageRepository;
     private final ChatHttpClient chatHttpClient;
+    private final ReactionHttpClient reactionHttpClient;
     private final MessageKafkaProducer messageKafkaProducer;
     private final RedisTemplate<String, Boolean> redisTemplate;
     private final MessageMapper messageMapper;
@@ -46,7 +49,7 @@ public class MessageService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
         }
 
-        Message message = new Message(dto);
+        Message message = new Message(dto, messageRepository.findById(dto.repliedMessageId()).orElse(null));
         Message saved = messageRepository.save(message);
         messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved));
         return saved;
@@ -64,8 +67,19 @@ public class MessageService {
         }
 
         Pageable page = PageRequest.of(offset, limit);
-        return messageRepository.findByChatIdOrderBySendAtDescIdDesc(chatId, page)
-                .map(messageMapper::toResponse);
+        Slice<Message> messageSlice = messageRepository.findByChatIdOrderBySendAtDescIdDesc(chatId, page);
+        Map<String, Set<ReactionOnMessage>> reactions = reactionHttpClient.getReactions(new ReactionsOnMessageListRequest(
+                userId,
+                messageSlice.stream().map(Message::getId).toList()
+        )).reactions();
+
+        return messageSlice.map(
+                item -> new MessageResponse(item, reactions.getOrDefault(item.getId(), Set.of()))
+        );
+    }
+
+    public Boolean isMessageOwner(Long userId, String messageId) {
+        return messageRepository.existsByUserIdAndId(userId, messageId);
     }
 
     @Transactional
@@ -95,8 +109,32 @@ public class MessageService {
 
     @Transactional
     public void readMessageByList(Long userId, MessageReadListDto dto) {
-        for(var id: dto.ids()) {
-            readMessageById(userId, id);
+        List<Message> messages = new ArrayList<>();
+        messageRepository.findAllById(dto.ids()).forEach(messages::add);
+
+        Map<Long, List<Message>> byChatId = messages.stream()
+                .collect(Collectors.groupingBy(Message::getChatId));
+
+        List<Message> toUpdate = new ArrayList<>();
+        for (Map.Entry<Long, List<Message>> entry : byChatId.entrySet()) {
+            if (!isChatMember(userId, entry.getKey())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+            }
+            for (Message message : entry.getValue()) {
+                if (Objects.equals(message.getUserId(), userId) || message.getReadStatus()) {
+                    continue;
+                }
+                message.setReadStatus(true);
+                toUpdate.add(message);
+            }
+        }
+
+        if (!toUpdate.isEmpty()) {
+            messageRepository.saveAll(toUpdate);
+            for (Message message : toUpdate) {
+                messageKafkaProducer.sendReadEvent(new MessageReadEventDto(
+                        message.getId(), message.getChatId(), userId, true));
+            }
         }
     }
 
@@ -138,7 +176,7 @@ public class MessageService {
         messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
                 message.getId(),
                 message.getChatId(),
-                userId
+                message.getUserId()
         ));
     }
 

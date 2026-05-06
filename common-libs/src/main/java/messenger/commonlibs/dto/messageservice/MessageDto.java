@@ -2,6 +2,7 @@ package messenger.commonlibs.dto.messageservice;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import lombok.Builder;
 
@@ -29,6 +30,9 @@ public record MessageDto(
         Boolean editStatus,
 
         @NotNull
-        LocalDateTime sendAt
+        LocalDateTime sendAt,
+
+        @Pattern(regexp = "^$|\\S.*")
+        String repliedMessageId
 ) {
 }

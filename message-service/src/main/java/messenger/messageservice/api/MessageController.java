@@ -16,6 +16,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.Set;
+
 import static messenger.commonlibs.Constants.USER_ID_HEADER;
 
 @Validated
@@ -36,9 +39,10 @@ public class MessageController {
                 .content(request.content())
                 .readStatus(false)
                 .editStatus(false)
-                .sendAt(request.sendAt())
+                .sendAt(LocalDateTime.now())
+                .repliedMessageId(request.repliedMessageId() != null ? request.repliedMessageId() : "")
                 .build();
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageMapper.toResponse(messageService.saveAndPublish(dto)));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(messageService.saveAndPublish(dto), Set.of()));
     }
 
     @GetMapping("/chat/{chatId}")
@@ -49,10 +53,16 @@ public class MessageController {
         return ResponseEntity.ok(messageService.getSlice(userId, chatId, limit, offset));
     }
 
+    @GetMapping("/{messageId}/exists/{userId}")
+    public ResponseEntity<Boolean> isMessageOwner(@PathVariable String messageId,
+                                                  @PathVariable Long userId) {
+        return ResponseEntity.ok(messageService.isMessageOwner(userId, messageId));
+    }
+
     @PutMapping("/edit")
-    public ResponseEntity<MessageResponse> editMessageById(@RequestHeader(USER_ID_HEADER) Long userId,
+    public ResponseEntity<MessageDto> editMessageById(@RequestHeader(USER_ID_HEADER) Long userId,
                                                            @Valid @RequestBody MessageEditDto dto) {
-        return ResponseEntity.ok(messageMapper.toResponse(messageService.editMessageById(userId, dto)));
+        return ResponseEntity.ok(messageMapper.toDto(messageService.editMessageById(userId, dto)));
     }
 
     @PutMapping("/read/{messageId}")

@@ -16,13 +16,14 @@ import java.time.LocalDateTime;
 @Document(collection = "message")
 @NoArgsConstructor
 public class Message {
-    Message(MessageDto dto) {
+    Message(MessageDto dto, Message xRepliedMessage) {
         chatId = dto.chatId();
         userId = dto.userId();
         content = dto.content();
         readStatus = dto.readStatus();
         editStatus = dto.editStatus();
         sendAt = dto.sendAt();
+        repliedMessage = xRepliedMessage;
     }
 
     @Id
@@ -53,4 +54,7 @@ public class Message {
     @Field(name = "send_at")
     @NonNull
     private LocalDateTime sendAt;
+
+    @Field(name = "replied_message")
+    private Message repliedMessage;
 }

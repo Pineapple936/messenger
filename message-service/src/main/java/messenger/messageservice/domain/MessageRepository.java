@@ -8,4 +8,6 @@ public interface MessageRepository extends MongoRepository<Message, String> {
     Slice<Message> findByChatIdOrderBySendAtDescIdDesc(Long chatId, Pageable page);
 
     void deleteByChatId(Long chatId);
+
+    Boolean existsByUserIdAndId(Long userId, String id);
 }
