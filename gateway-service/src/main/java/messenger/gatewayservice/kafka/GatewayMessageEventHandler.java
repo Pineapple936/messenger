@@ -18,6 +18,7 @@ public class GatewayMessageEventHandler {
 
     public void handle(GatewayMessageEventDto messageEvent) {
         var users = chatParticipantsClient.getChatUsers(messageEvent.chatId());
+        log.info("Handling {} for chatId={}, participants={}", messageEvent.type(), messageEvent.chatId(), users);
         switch (messageEvent.type()) {
             case MESSAGE_CREATED -> {
                 if (messageEvent.message() == null) {
@@ -26,6 +27,7 @@ public class GatewayMessageEventHandler {
                 }
                 for (Long userId : users) {
                     if (!userId.equals(messageEvent.message().userId())) {
+                        log.info("Pushing message to userId={}, online={}", userId, userWebSocketSessions.isOnline(userId));
                         userWebSocketSessions.pushMessageToUser(userId, messageEvent.message());
                     }
                 }

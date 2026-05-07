@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Positive;
 import lombok.Builder;
 
 import java.time.Instant;
+import java.util.List;
 
 @Builder
 public record MessageDto(
@@ -31,6 +32,8 @@ public record MessageDto(
 
         @NotNull
         Instant sendAt,
+
+        List<String> photoLinks,
 
         @Pattern(regexp = "^$|\\S.*")
         String repliedMessageId

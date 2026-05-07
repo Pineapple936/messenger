@@ -15,6 +15,12 @@ public record ChatResponse(
         String chatName,
 
         @NotNull
-        Instant lastMessageAt
+        Instant lastMessageAt,
+
+        String lastMessagePreview,
+
+        Long lastMessageUserId,
+
+        Boolean lastMessageHasMedia
 ) {
 }

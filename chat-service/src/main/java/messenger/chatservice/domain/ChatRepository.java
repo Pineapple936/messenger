@@ -14,17 +14,27 @@ public interface ChatRepository extends JpaRepository<Chat, Long> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             update Chat c
-            set c.lastMessageAt = :lastMessageAt
+            set c.lastMessageAt      = :lastMessageAt,
+                c.lastMessagePreview = :preview,
+                c.lastMessageUserId  = :userId,
+                c.lastMessageHasMedia = :hasMedia
             where c.id = :chatId
               and (c.lastMessageAt is null or c.lastMessageAt < :lastMessageAt)
             """)
-    int touchLastMessageAt(@Param("chatId") Long chatId, @Param("lastMessageAt") Instant lastMessageAt);
+    int touchLastMessage(@Param("chatId")       Long chatId,
+                         @Param("lastMessageAt") Instant lastMessageAt,
+                         @Param("preview")       String preview,
+                         @Param("userId")        Long userId,
+                         @Param("hasMedia")      Boolean hasMedia);
 
     @Query("""
     SELECT new messenger.chatservice.api.dto.ChatResponse(
         c.id,
         COALESCE(cp.customChatName, c.name),
-        c.lastMessageAt
+        c.lastMessageAt,
+        c.lastMessagePreview,
+        c.lastMessageUserId,
+        c.lastMessageHasMedia
     )
     FROM Chat c
     JOIN c.participants cp

@@ -21,6 +21,8 @@ public record CreateUserDto(
         String tag,
 
         @Size(max = 50)
-        String description
+        String description,
+
+        String avatarUrl
 ) {
 }

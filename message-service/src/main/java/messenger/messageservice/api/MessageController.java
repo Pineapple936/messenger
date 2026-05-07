@@ -37,6 +37,7 @@ public class MessageController {
                 .chatId(request.chatId())
                 .userId(userId)
                 .content(request.content())
+                .photoLinks(request.photoLinks())
                 .readStatus(false)
                 .editStatus(false)
                 .sendAt(Instant.now())

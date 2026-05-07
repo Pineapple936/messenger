@@ -34,6 +34,15 @@ public class Chat {
     @Column(name = "last_message_at")
     private Instant lastMessageAt;
 
+    @Column(name = "last_message_preview", length = 200)
+    private String lastMessagePreview;
+
+    @Column(name = "last_message_user_id")
+    private Long lastMessageUserId;
+
+    @Column(name = "last_message_has_media")
+    private Boolean lastMessageHasMedia;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

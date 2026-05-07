@@ -175,8 +175,11 @@ public class ChatService {
     }
 
     @Transactional
-    public void touchChatLastMessage(Long chatId, Instant lastMessageAt) {
-        int updated = chatRepository.touchLastMessageAt(chatId, lastMessageAt);
+    public void touchChatLastMessage(Long chatId, Instant lastMessageAt, String content, Long userId, boolean hasMedia) {
+        String preview = content != null && !content.isBlank()
+                ? (content.length() > 100 ? content.substring(0, 100) : content)
+                : null;
+        int updated = chatRepository.touchLastMessage(chatId, lastMessageAt, preview, userId, hasMedia);
         if (updated == 0 && !chatRepository.existsById(chatId)) {
             throw new IllegalArgumentException("Chat not found");
         }

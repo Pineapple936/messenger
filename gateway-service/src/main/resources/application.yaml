@@ -2,6 +2,8 @@ server:
   port: 8080
 
 spring:
+  codec:
+    max-in-memory-size: 52MB
   data:
     redis:
       host: localhost
@@ -67,6 +69,16 @@ spring:
               uri: ${REACTION_SERVICE_URI:${REACTION_SERVICE_URL:http://localhost:8085}}
               predicates:
                 - Path=/reaction/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@userIdKeyResolver}"
+                    redis-rate-limiter.replenishRate: 30
+                    redis-rate-limiter.burstCapacity: 60
+            - id: media_route
+              uri: ${MEDIA_SERVICE_URI:${MEDIA_SERVICE_URL:http://localhost:8086}}
+              predicates:
+                - Path=/media/**
               filters:
                 - name: RequestRateLimiter
                   args:

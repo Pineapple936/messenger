@@ -7,5 +7,5 @@ import org.mapstruct.Mapper;
 
 @Mapper(config = CommonMapperConfig.class)
 public interface UserDetailsMapper {
-    UserDetailsResponse toDto(UserDetails userDetails);
+    UserDetailsResponse toResponse(UserDetails userDetails);
 }

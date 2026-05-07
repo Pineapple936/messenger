@@ -1,11 +1,11 @@
 package messenger.userservice.api.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
-import lombok.NonNull;
 
 public record UserDetailsResponse(
-        @NonNull
+        @NotNull
         @Positive
         Long userId,
 
@@ -15,6 +15,8 @@ public record UserDetailsResponse(
         @NotBlank
         String name,
 
-        String description
+        String description,
+
+        String avatarUrl
 ) {
 }

@@ -7,6 +7,7 @@ import messenger.commonlibs.dto.messageservice.ReactionOnMessage;
 import messenger.messageservice.domain.Message;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 
 public record MessageResponse(
@@ -21,7 +22,6 @@ public record MessageResponse(
         @Positive
         Long userId,
 
-        @NotBlank
         String content,
 
         @NotNull
@@ -32,6 +32,8 @@ public record MessageResponse(
 
         @NotNull
         Instant sendAt,
+
+        List<String> photoLinks,
 
         @NotNull
         Set<ReactionOnMessage> reactions,
@@ -47,6 +49,7 @@ public record MessageResponse(
                 message.getReadStatus(),
                 message.getEditStatus(),
                 message.getSendAt(),
+                message.getPhotoLinks(),
                 reactions,
                 message.getRepliedMessage() == null ? null : new RepliedMessageInfo(
                     message.getRepliedMessage().getId(),
