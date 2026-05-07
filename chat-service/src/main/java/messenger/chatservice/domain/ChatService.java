@@ -175,28 +175,6 @@ public class ChatService {
     }
 
     @Transactional
-    public void setCustomChatName(Long userId, Long chatId, String name) {
-        ChatParticipant participant = findActiveParticipant(userId, chatId);
-        participant.setCustomChatName(name == null || name.isBlank() ? null : name.trim());
-        chatParticipantRepository.save(participant);
-    }
-
-    @Transactional
-    public void updateChatAvatar(Long requesterId, Long chatId, String avatarUrl) {
-        ChatParticipant participant = findActiveParticipant(requesterId, chatId);
-        if (participant.getRole() == ChatRole.MEMBER) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only admin or owner can change group avatar");
-        }
-        Chat chat = chatRepository.findById(chatId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Chat not found"));
-        if (chat.getType() != ChatType.GROUP) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only group chats can have avatars");
-        }
-        chat.setAvatarUrl(avatarUrl);
-        chatRepository.save(chat);
-    }
-
-    @Transactional
     public void touchChatLastMessage(Long chatId, Instant lastMessageAt, String content, Long userId, boolean hasMedia) {
         String preview = content != null && !content.isBlank()
                 ? (content.length() > 100 ? content.substring(0, 100) : content)

@@ -21,8 +21,6 @@ public record ChatResponse(
 
         Long lastMessageUserId,
 
-        Boolean lastMessageHasMedia,
-
-        String avatarUrl
+        Boolean lastMessageHasMedia
 ) {
 }

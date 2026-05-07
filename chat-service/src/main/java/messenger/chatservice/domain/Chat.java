@@ -43,9 +43,6 @@ public class Chat {
     @Column(name = "last_message_has_media")
     private Boolean lastMessageHasMedia;
 
-    @Column(name = "avatar_url")
-    private String avatarUrl;
-
     @CreationTimestamp
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
