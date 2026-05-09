@@ -57,6 +57,14 @@ public class ChatController {
         return ResponseEntity.ok().build();
     }
 
+    @PutMapping("/{chatId}/my-name")
+    public ResponseEntity<Void> setMyCustomName(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                @PathVariable @Positive Long chatId,
+                                                @RequestBody messenger.chatservice.api.dto.SetCustomNameDto dto) {
+        chatService.setCustomChatName(userId, chatId, dto.name());
+        return ResponseEntity.ok().build();
+    }
+
     @PutMapping("/{chatId}/avatar")
     public ResponseEntity<Void> updateAvatar(@RequestHeader(USER_ID_HEADER) Long userId,
                                              @PathVariable @Positive Long chatId,
