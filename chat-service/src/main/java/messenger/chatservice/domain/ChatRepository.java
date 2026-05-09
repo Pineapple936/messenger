@@ -34,7 +34,8 @@ public interface ChatRepository extends JpaRepository<Chat, Long> {
         c.lastMessageAt,
         c.lastMessagePreview,
         c.lastMessageUserId,
-        c.lastMessageHasMedia
+        c.lastMessageHasMedia,
+        c.avatarUrl
     )
     FROM Chat c
     JOIN c.participants cp
