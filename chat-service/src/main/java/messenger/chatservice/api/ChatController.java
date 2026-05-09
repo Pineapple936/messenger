@@ -57,6 +57,14 @@ public class ChatController {
         return ResponseEntity.ok().build();
     }
 
+    @PutMapping("/{chatId}/avatar")
+    public ResponseEntity<Void> updateAvatar(@RequestHeader(USER_ID_HEADER) Long userId,
+                                             @PathVariable @Positive Long chatId,
+                                             @RequestBody messenger.chatservice.api.dto.UpdateChatAvatarDto dto) {
+        chatService.updateChatAvatar(userId, chatId, dto.avatarUrl());
+        return ResponseEntity.ok().build();
+    }
+
     @PutMapping("/role")
     public ResponseEntity<Void> updateRole(@RequestHeader(USER_ID_HEADER) Long promoterId,
                                            @RequestBody @Valid UpdateRoleUserDto dto) {

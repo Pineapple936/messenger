@@ -370,4 +370,14 @@ public class UserWebSocketSessions {
             String reactionType
     ) {
     }
+
+    private record OutgoingTypingEvent(String type, Long chatId, Long userId) {
+    }
+
+    public void pushTypingToUser(Long userId, Long chatId, Long typingUserId) {
+        Set<Sinks.Many<String>> userSinks = sessions.get(userId);
+        if (userSinks == null || userSinks.isEmpty()) return;
+        String payload = toJsonSafe(new OutgoingTypingEvent("typing", chatId, typingUserId));
+        for (Sinks.Many<String> sink : userSinks) emitToSink(sink, payload);
+    }
 }
