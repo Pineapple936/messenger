@@ -175,6 +175,13 @@ public class ChatService {
     }
 
     @Transactional
+    public void setCustomChatName(Long userId, Long chatId, String name) {
+        ChatParticipant participant = findActiveParticipant(userId, chatId);
+        participant.setCustomChatName(name == null || name.isBlank() ? null : name.trim());
+        chatParticipantRepository.save(participant);
+    }
+
+    @Transactional
     public void updateChatAvatar(Long requesterId, Long chatId, String avatarUrl) {
         ChatParticipant participant = findActiveParticipant(requesterId, chatId);
         if (participant.getRole() == ChatRole.MEMBER) {
