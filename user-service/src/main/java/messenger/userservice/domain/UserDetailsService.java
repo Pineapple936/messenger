@@ -3,8 +3,10 @@ package messenger.userservice.domain;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.userservice.CreateUserDto;
 import messenger.commonlibs.dto.userservice.DeleteUserDto;
+import messenger.userservice.api.dto.EditAvatarDto;
 import messenger.userservice.api.dto.EditUserDto;
 import messenger.userservice.external.AuthHttpClient;
+import messenger.userservice.external.MediaHttpClient;
 import messenger.userservice.kafka.UserKafkaProducer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +22,7 @@ public class UserDetailsService {
     private final UserDetailsRepository userDetailsRepository;
     private final UserKafkaProducer userKafkaProducer;
     private final AuthHttpClient authHttpClient;
+    private final MediaHttpClient mediaHttpClient;
 
     @Transactional
     public UserDetails save(CreateUserDto dto) {
@@ -27,14 +30,19 @@ public class UserDetailsService {
     }
 
     @Transactional(readOnly = true)
-    public UserDetails getByUserId(Long userId) {
+    public UserDetails findByUserId(Long userId) {
         return userDetailsRepository.findByUserId(userId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
     }
 
     @Transactional(readOnly = true)
     public Boolean existsUserById(Long userId) {
-        return userDetailsRepository.existsUserDetailsByUserId(userId);
+        return userDetailsRepository.existsByUserId(userId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> existsUsersById(List<Long> usersId) {
+        return userDetailsRepository.findExistingIds(usersId);
     }
 
     @Transactional(readOnly = true)
@@ -44,7 +52,7 @@ public class UserDetailsService {
 
     @Transactional
     public UserDetails editUser(Long userId, EditUserDto dto) {
-        UserDetails userDetails = getByUserId(userId);
+        UserDetails userDetails = findByUserId(userId);
 
         if(dto.name() != null) {
             userDetails.setName(dto.name());
@@ -58,6 +66,18 @@ public class UserDetailsService {
             userDetails.setDescription(dto.description());
         }
 
+        return userDetailsRepository.save(userDetails);
+    }
+
+    @Transactional
+    public UserDetails editAvatar(Long userId, EditAvatarDto dto) {
+        UserDetails userDetails = findByUserId(userId);
+
+        if(dto.newUrl() == null) {
+            mediaHttpClient.deleteByFileName(userDetails.getAvatarUrl());
+        }
+
+        userDetails.setAvatarUrl(dto.newUrl());
         return userDetailsRepository.save(userDetails);
     }
 

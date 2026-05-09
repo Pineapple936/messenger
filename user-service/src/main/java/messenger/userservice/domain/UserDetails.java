@@ -19,6 +19,9 @@ public class UserDetails {
         name = dto.name();
         tag = dto.tag();
         description = dto.description();
+        if(dto.avatarUrl() != null) {
+            avatarUrl = dto.avatarUrl();
+        }
     }
 
     @Id
@@ -36,6 +39,9 @@ public class UserDetails {
 
     @Column(name = "description", nullable = true, length = 50)
     private String description;
+
+    @Column(name = "avatar_url")
+    private String avatarUrl;
 
     @CreationTimestamp
     @JsonIgnore

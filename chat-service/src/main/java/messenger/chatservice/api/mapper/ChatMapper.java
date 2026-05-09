@@ -4,8 +4,11 @@ import messenger.chatservice.api.dto.ChatResponse;
 import messenger.chatservice.domain.Chat;
 import messenger.commonlibs.mapper.CommonMapperConfig;
 import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 
 @Mapper(config = CommonMapperConfig.class)
 public interface ChatMapper {
-    ChatResponse toDto(Chat chat);
+    @Mapping(source = "id", target = "chatId")
+    @Mapping(source = "name", target = "chatName")
+    ChatResponse toResponse(Chat chat);
 }

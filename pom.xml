@@ -17,6 +17,7 @@
         <module>chat-service</module>
         <module>message-service</module>
         <module>reaction-service</module>
+        <module>media-service</module>
     </modules>
 
     <properties>

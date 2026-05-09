@@ -8,6 +8,7 @@ public record MessageEditEventDto(
         @NotBlank
         String id,
 
+        @NotNull
         @Positive
         Long chatId,
 

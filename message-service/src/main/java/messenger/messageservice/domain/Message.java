@@ -2,6 +2,7 @@ package messenger.messageservice.domain;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -10,7 +11,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.util.List;
 
 @Data
 @Document(collection = "message")
@@ -24,6 +26,10 @@ public class Message {
         editStatus = dto.editStatus();
         sendAt = dto.sendAt();
         repliedMessage = xRepliedMessage;
+
+        if(dto.photoLinks() != null) {
+            photoLinks = dto.photoLinks();
+        }
     }
 
     @Id
@@ -40,8 +46,11 @@ public class Message {
     private Long userId;
 
     @Field(name = "content")
-    @NotBlank
     private String content;
+
+    @Field(name = "photo_links")
+    @Size(max = 10)
+    private List<@NotBlank String> photoLinks;
 
     @Field(name = "read_status")
     @NonNull
@@ -53,7 +62,7 @@ public class Message {
 
     @Field(name = "send_at")
     @NonNull
-    private LocalDateTime sendAt;
+    private Instant sendAt;
 
     @Field(name = "replied_message")
     private Message repliedMessage;

@@ -8,10 +8,11 @@ import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
 import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
 import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Sinks;
 
-import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 @RequiredArgsConstructor
 public class UserWebSocketSessions {
+    private static final Logger log = LoggerFactory.getLogger(UserWebSocketSessions.class);
     private static final int MAX_PRESENCE_SUBSCRIPTIONS = 512;
 
     private final ObjectMapper objectMapper;
@@ -90,7 +92,8 @@ public class UserWebSocketSessions {
                 messageDto.userId(),
                 messageDto.content(),
                 messageDto.editStatus(),
-                messageDto.sendAt()
+                messageDto.sendAt() != null ? messageDto.sendAt().toString() : null,
+                messageDto.photoLinks()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -266,7 +269,7 @@ public class UserWebSocketSessions {
         }
     }
 
-    private boolean isOnline(Long userId) {
+    public boolean isOnline(Long userId) {
         Set<Sinks.Many<String>> userSinks = sessions.get(userId);
         return userSinks != null && !userSinks.isEmpty();
     }
@@ -325,7 +328,8 @@ public class UserWebSocketSessions {
             Long userId,
             String content,
             Boolean editStatus,
-            LocalDateTime sendAt
+            String sendAt,
+            java.util.List<String> photoLinks
     ) {
     }
 
@@ -365,5 +369,15 @@ public class UserWebSocketSessions {
             Long userId,
             String reactionType
     ) {
+    }
+
+    private record OutgoingTypingEvent(String type, Long chatId, Long userId) {
+    }
+
+    public void pushTypingToUser(Long userId, Long chatId, Long typingUserId) {
+        Set<Sinks.Many<String>> userSinks = sessions.get(userId);
+        if (userSinks == null || userSinks.isEmpty()) return;
+        String payload = toJsonSafe(new OutgoingTypingEvent("typing", chatId, typingUserId));
+        for (Sinks.Many<String> sink : userSinks) emitToSink(sink, payload);
     }
 }

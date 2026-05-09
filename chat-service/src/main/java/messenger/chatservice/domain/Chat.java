@@ -1,38 +1,52 @@
 package messenger.chatservice.domain;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Entity
 @Table(name = "chat")
 @NoArgsConstructor
 public class Chat {
-    Chat(Long createUserId, Long userId2) {
-        userId1 = createUserId;
-        this.userId2 = userId2;
-        lastMessageAt = LocalDateTime.now();
-    }
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "userId1", nullable = false)
-    private Long userId1;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type", nullable = false)
+    private ChatType type;
 
-    @Column(name = "userId2", nullable = false)
-    private Long userId2;
+    @Column(name = "name", length = 63, nullable = false)
+    private String name;
+
+    @OneToMany(mappedBy = "chat", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<ChatParticipant> participants;
+
+    @Column(name = "created_by", nullable = false)
+    private Long createdUserId;
+
+    @Column(name = "last_message_at")
+    private Instant lastMessageAt;
+
+    @Column(name = "last_message_preview", length = 200)
+    private String lastMessagePreview;
+
+    @Column(name = "last_message_user_id")
+    private Long lastMessageUserId;
+
+    @Column(name = "last_message_has_media")
+    private Boolean lastMessageHasMedia;
+
+    @Column(name = "avatar_url")
+    private String avatarUrl;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
-
-    @Column(name = "last_message_at")
-    private LocalDateTime lastMessageAt;
 }

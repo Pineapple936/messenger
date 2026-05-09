@@ -6,6 +6,7 @@ import messenger.messageservice.api.dto.MessageEditDto;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
+import messenger.messageservice.external.MediaHttpClient;
 import messenger.messageservice.external.ReactionHttpClient;
 import messenger.messageservice.kafka.MessageKafkaProducer;
 import messenger.messageservice.external.ChatHttpClient;
@@ -33,6 +34,7 @@ public class MessageService {
     private final MessageRepository messageRepository;
     private final ChatHttpClient chatHttpClient;
     private final ReactionHttpClient reactionHttpClient;
+    private final MediaHttpClient mediaHttpClient;
     private final MessageKafkaProducer messageKafkaProducer;
     private final RedisTemplate<String, Boolean> redisTemplate;
     private final MessageMapper messageMapper;
@@ -109,8 +111,7 @@ public class MessageService {
 
     @Transactional
     public void readMessageByList(Long userId, MessageReadListDto dto) {
-        List<Message> messages = new ArrayList<>();
-        messageRepository.findAllById(dto.ids()).forEach(messages::add);
+        List<Message> messages = new ArrayList<>(messageRepository.findAllById(dto.ids()));
 
         Map<Long, List<Message>> byChatId = messages.stream()
                 .collect(Collectors.groupingBy(Message::getChatId));
@@ -172,6 +173,7 @@ public class MessageService {
             );
         }
 
+        if(message.getPhotoLinks() != null) mediaHttpClient.deleteByListName(message.getPhotoLinks());
         messageRepository.deleteById(messageId);
         messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
                 message.getId(),
@@ -189,6 +191,14 @@ public class MessageService {
             redisTemplate.delete(keys);
         }
 
+        List<String> files = messageRepository.findByChatId(chatId).stream()
+                .filter(message -> message.getPhotoLinks() != null)
+                .flatMap(message -> message.getPhotoLinks().stream())
+                .toList();
+
+        if (!files.isEmpty()) {
+            mediaHttpClient.deleteByListName(files);
+        }
         messageRepository.deleteByChatId(chatId);
     }
 

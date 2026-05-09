@@ -16,7 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Set;
 
 import static messenger.commonlibs.Constants.USER_ID_HEADER;
@@ -37,9 +37,10 @@ public class MessageController {
                 .chatId(request.chatId())
                 .userId(userId)
                 .content(request.content())
+                .photoLinks(request.photoLinks())
                 .readStatus(false)
                 .editStatus(false)
-                .sendAt(LocalDateTime.now())
+                .sendAt(Instant.now())
                 .repliedMessageId(request.repliedMessageId() != null ? request.repliedMessageId() : "")
                 .build();
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(messageService.saveAndPublish(dto), Set.of()));

@@ -1,5 +1,6 @@
 package messenger.gatewayservice.ws;
 
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -18,19 +19,22 @@ public class ChatParticipantsClient {
     }
 
     public List<Long> getChatUsers(Long chatId) {
-        ChatUsersResponse response = chatWebClient.get()
+        List<ChatParticipantEntry> participants = chatWebClient.get()
                 .uri("/chat/{chatId}/users", chatId)
                 .retrieve()
-                .bodyToMono(ChatUsersResponse.class)
+                .bodyToMono(new ParameterizedTypeReference<List<ChatParticipantEntry>>() {})
                 .block(Duration.ofSeconds(5));
 
-        if (response == null || response.userId1() == null || response.userId2() == null) {
+        if (participants == null || participants.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to fetch chat users");
         }
 
-        return List.of(response.userId1(), response.userId2());
+        return participants.stream()
+                .map(ChatParticipantEntry::userId)
+                .filter(id -> id != null)
+                .toList();
     }
 
-    private record ChatUsersResponse(Long userId1, Long userId2) {
+    private record ChatParticipantEntry(Long userId, String role, String customChatName) {
     }
 }

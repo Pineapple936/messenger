@@ -18,7 +18,9 @@ public class ChatKafkaConsumer {
             containerFactory = "messageContainerFactory"
     )
     public void consumeMessage(ConsumerRecord<String, MessageDto> record) {
-        chatService.touchChatLastMessage(record.value().chatId(), record.value().sendAt());
+        MessageDto msg = record.value();
+        boolean hasMedia = msg.photoLinks() != null && !msg.photoLinks().isEmpty();
+        chatService.touchChatLastMessage(msg.chatId(), msg.sendAt(), msg.content(), msg.userId(), hasMedia);
     }
 
     @KafkaListener(
