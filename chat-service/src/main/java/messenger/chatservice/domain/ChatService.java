@@ -9,6 +9,7 @@ import messenger.chatservice.api.dto.UpdateRoleUserDto;
 import messenger.chatservice.external.UserHttpClient;
 import messenger.chatservice.kafka.ChatKafkaProducer;
 import messenger.commonlibs.dto.chatservice.DeleteChatDto;
+import messenger.commonlibs.dto.chatservice.RemoveChatParticipantDto;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -223,6 +224,8 @@ public class ChatService {
         if (chatParticipantRepository.findByChatId(chatId).stream().allMatch(p -> p.getLeftAt() != null)) {
             chatRepository.delete(chat);
             chatKafkaProducer.sendMessageToKafka(new DeleteChatDto(chatId));
+        } else {
+            chatKafkaProducer.sendParticipantRemoveEvent(new RemoveChatParticipantDto(chatId, userId));
         }
     }
 
@@ -245,6 +248,7 @@ public class ChatService {
         }
 
         List<Long> chatIdsToDelete = new ArrayList<>();
+        List<RemoveChatParticipantDto> participantRemovals = new ArrayList<>();
 
         for (ChatParticipant participant : participants) {
             Chat chat = participant.getChat();
@@ -258,6 +262,8 @@ public class ChatService {
                 if (chatParticipantRepository.findByChatId(chat.getId()).stream()
                         .allMatch(p -> p.getLeftAt() != null)) {
                     chatIdsToDelete.add(chat.getId());
+                } else {
+                    participantRemovals.add(new RemoveChatParticipantDto(chat.getId(), userId));
                 }
             }
         }
@@ -268,5 +274,7 @@ public class ChatService {
             chatIdsToDelete.forEach(chatId ->
                     chatKafkaProducer.sendMessageToKafka(new DeleteChatDto(chatId)));
         }
+
+        participantRemovals.forEach(chatKafkaProducer::sendParticipantRemoveEvent);
     }
 }

@@ -202,6 +202,11 @@ public class MessageService {
         messageRepository.deleteByChatId(chatId);
     }
 
+    public void evictChatMemberCache(Long chatId, Long userId) {
+        String key = chatUserKeyPattern.formatted(chatId, userId);
+        redisTemplate.delete(key);
+    }
+
     private boolean isChatMember(Long userId, Long chatId) {
         String key = chatUserKeyPattern.formatted(chatId, userId);
         Boolean cache = redisTemplate.opsForValue().get(key);
