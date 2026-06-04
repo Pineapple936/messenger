@@ -7,11 +7,15 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
+import static messenger.commonlibs.Constants.INTERNAL_KEY_HEADER;
+
 @Configuration
 public class UserHttpClientConfig {
     @Bean
-    RestClient userRestClient(@Value("${USER_SERVICE_URL:http://localhost:8082}") String userServiceUrl) {
-        return RestClient.builder().baseUrl(userServiceUrl).build();
+    RestClient userRestClient(
+            @Value("${USER_SERVICE_URL:http://localhost:8082}") String userServiceUrl,
+            @Value("${INTERNAL_API_KEY:}") String internalApiKey) {
+        return RestClient.builder().baseUrl(userServiceUrl).defaultHeader(INTERNAL_KEY_HEADER, internalApiKey).build();
     }
 
     @Bean

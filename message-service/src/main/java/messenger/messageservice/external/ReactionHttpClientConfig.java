@@ -7,11 +7,15 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
+import static messenger.commonlibs.Constants.INTERNAL_KEY_HEADER;
+
 @Configuration
 public class ReactionHttpClientConfig {
     @Bean
-    RestClient restClient(@Value("${REACTION_SERVICE_URL:http://localhost:8085}") String reactionServiceUrl) {
-        return RestClient.builder().baseUrl(reactionServiceUrl).build();
+    RestClient restClient(
+            @Value("${REACTION_SERVICE_URL:http://localhost:8085}") String reactionServiceUrl,
+            @Value("${INTERNAL_API_KEY:}") String internalApiKey) {
+        return RestClient.builder().baseUrl(reactionServiceUrl).defaultHeader(INTERNAL_KEY_HEADER, internalApiKey).build();
     }
 
     @Bean
