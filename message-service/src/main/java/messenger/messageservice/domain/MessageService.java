@@ -46,12 +46,33 @@ public class MessageService {
     private String chatUserKeyPattern;
 
     @Transactional
-    public Message saveAndPublish(MessageDto dto) {
+    public Message saveAndPublish(MessageDto dto, String forwardedFromMessageId) {
         if (!isChatMember(dto.userId(), dto.chatId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
         }
 
-        Message message = new Message(dto, messageRepository.findById(dto.repliedMessageId()).orElse(null));
+        if (forwardedFromMessageId != null && dto.repliedMessageId() != null && !dto.repliedMessageId().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A message cannot be a reply and a forwarded message at the same time");
+        }
+
+        ForwardedMessage forwardedMessage = null;
+        if (forwardedFromMessageId != null) {
+            Message source = findById(forwardedFromMessageId);
+            if (!isChatMember(dto.userId(), source.getChatId())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User cannot access the source message");
+            }
+            forwardedMessage = new ForwardedMessage(source);
+        }
+
+        Message repliedMessage = null;
+        if (dto.repliedMessageId() != null && !dto.repliedMessageId().isEmpty()) {
+            repliedMessage = findById(dto.repliedMessageId());
+            if (!Objects.equals(repliedMessage.getChatId(), dto.chatId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Replied message belongs to another chat");
+            }
+        }
+
+        Message message = new Message(dto, repliedMessage, forwardedMessage);
         Message saved = messageRepository.save(message);
         messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved));
         return saved;
@@ -150,6 +171,10 @@ public class MessageService {
             );
         }
 
+        if (message.getForwardedMessage() != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Forwarded messages cannot be edited");
+        }
+
         message.setContent(dto.content());
         message.setEditStatus(true);
         Message saved = messageRepository.save(message);
@@ -173,8 +198,10 @@ public class MessageService {
             );
         }
 
-        if(message.getPhotoLinks() != null) mediaHttpClient.deleteByListName(message.getPhotoLinks());
+        String mediaSourceId = mediaSourceId(message);
+        List<String> photoLinks = message.getPhotoLinks();
         messageRepository.deleteById(messageId);
+        deleteMediaIfUnreferenced(mediaSourceId, photoLinks);
         messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
                 message.getId(),
                 message.getChatId(),
@@ -191,15 +218,15 @@ public class MessageService {
             redisTemplate.delete(keys);
         }
 
-        List<String> files = messageRepository.findByChatId(chatId).stream()
-                .filter(message -> message.getPhotoLinks() != null)
-                .flatMap(message -> message.getPhotoLinks().stream())
-                .toList();
-
-        if (!files.isEmpty()) {
-            mediaHttpClient.deleteByListName(files);
-        }
+        Map<String, List<String>> mediaBySource = messageRepository.findByChatId(chatId).stream()
+                .filter(message -> message.getPhotoLinks() != null && !message.getPhotoLinks().isEmpty())
+                .collect(Collectors.toMap(
+                        this::mediaSourceId,
+                        Message::getPhotoLinks,
+                        (left, right) -> left
+                ));
         messageRepository.deleteByChatId(chatId);
+        mediaBySource.forEach(this::deleteMediaIfUnreferenced);
     }
 
     public void evictChatMemberCache(Long chatId, Long userId) {
@@ -221,5 +248,22 @@ public class MessageService {
         if(hasUser) redisTemplate.opsForValue().set(key, true, Duration.ofMinutes(chatUserKeyTtlMinutes));
 
         return hasUser;
+    }
+
+    private String mediaSourceId(Message message) {
+        return message.getForwardedMessage() == null
+                ? message.getId()
+                : message.getForwardedMessage().getOriginalMessageId();
+    }
+
+    private void deleteMediaIfUnreferenced(String sourceMessageId, List<String> photoLinks) {
+        if (photoLinks == null || photoLinks.isEmpty()) {
+            return;
+        }
+        if (messageRepository.existsById(sourceMessageId)
+                || messageRepository.existsByForwardedMessageOriginalMessageId(sourceMessageId)) {
+            return;
+        }
+        mediaHttpClient.deleteByListName(photoLinks);
     }
 }

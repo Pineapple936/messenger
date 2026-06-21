@@ -36,6 +36,8 @@ public record MessageDto(
         List<String> photoLinks,
 
         @Pattern(regexp = "^$|\\S.*")
-        String repliedMessageId
+        String repliedMessageId,
+
+        ForwardedMessageDto forwardedMessage
 ) {
 }

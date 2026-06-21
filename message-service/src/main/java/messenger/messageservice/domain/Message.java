@@ -18,17 +18,19 @@ import java.util.List;
 @Document(collection = "message")
 @NoArgsConstructor
 public class Message {
-    Message(MessageDto dto, Message xRepliedMessage) {
+    Message(MessageDto dto, Message xRepliedMessage, ForwardedMessage forwardedMessage) {
         chatId = dto.chatId();
         userId = dto.userId();
-        content = dto.content();
+        content = forwardedMessage == null ? dto.content() : forwardedMessage.getContent();
         readStatus = dto.readStatus();
         editStatus = dto.editStatus();
         sendAt = dto.sendAt();
         repliedMessage = xRepliedMessage;
+        this.forwardedMessage = forwardedMessage;
 
-        if(dto.photoLinks() != null) {
-            photoLinks = dto.photoLinks();
+        List<String> sourcePhotoLinks = forwardedMessage == null ? dto.photoLinks() : forwardedMessage.getPhotoLinks();
+        if(sourcePhotoLinks != null) {
+            photoLinks = List.copyOf(sourcePhotoLinks);
         }
     }
 
@@ -66,4 +68,7 @@ public class Message {
 
     @Field(name = "replied_message")
     private Message repliedMessage;
+
+    @Field(name = "forwarded_message")
+    private ForwardedMessage forwardedMessage;
 }

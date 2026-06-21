@@ -43,7 +43,9 @@ public class MessageController {
                 .sendAt(Instant.now())
                 .repliedMessageId(request.repliedMessageId() != null ? request.repliedMessageId() : "")
                 .build();
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(messageService.saveAndPublish(dto), Set.of()));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(
+                messageService.saveAndPublish(dto, request.forwardedFromMessageId()), Set.of()
+        ));
     }
 
     @GetMapping("/chat/{chatId}")

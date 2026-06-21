@@ -17,6 +17,9 @@ public record CreateMessage(
         List<String> photoLinks,
 
         @Pattern(regexp = "^$|\\S.*")
-        String repliedMessageId
+        String repliedMessageId,
+
+        @Pattern(regexp = "\\S.*")
+        String forwardedFromMessageId
 ) {
 }

@@ -38,7 +38,9 @@ public record MessageResponse(
         @NotNull
         Set<ReactionOnMessage> reactions,
 
-        RepliedMessageInfo repliedMessage
+        RepliedMessageInfo repliedMessage,
+
+        ForwardedMessageInfo forwardedMessage
 ) {
         public MessageResponse(Message message, Set<ReactionOnMessage> reactions) {
             this(
@@ -56,7 +58,8 @@ public record MessageResponse(
                     message.getRepliedMessage().getUserId(),
                     message.getRepliedMessage().getContent(),
                     message.getRepliedMessage().getSendAt()
-                )
+                ),
+                message.getForwardedMessage() == null ? null : new ForwardedMessageInfo(message.getForwardedMessage())
             );
         }
 }
