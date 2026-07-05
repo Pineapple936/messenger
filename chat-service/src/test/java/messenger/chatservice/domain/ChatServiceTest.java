@@ -59,6 +59,22 @@ class ChatServiceTest {
     }
 
     @Test
+    void createPrivateChatRejectsMissingOnlyParticipant() {
+        when(userHttpClient.existsUsersById(List.of(999L))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.create(1L, new CreateChatDto("direct", ChatType.PRIVATE, List.of(999L))))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Participants not found");
+    }
+
+    @Test
+    void createPrivateChatRejectsMoreThanOneRequestedParticipant() {
+        assertThatThrownBy(() -> service.create(1L, new CreateChatDto("direct", ChatType.PRIVATE, List.of(999L, 2L))))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Private chat can only have one participant");
+    }
+
+    @Test
     void addUserInChatRejectsMemberInviter() {
         Chat chat = new Chat();
         chat.setId(10L);

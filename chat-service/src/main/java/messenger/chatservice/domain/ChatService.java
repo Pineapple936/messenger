@@ -32,14 +32,18 @@ public class ChatService {
 
     @Transactional
     public Chat create(Long createUserId, CreateChatDto dto) {
+        if (dto.chatType() == ChatType.PRIVATE && dto.participantIds().size() != 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Private chat can only have one participant");
+        }
+
         List<Long> correctParticipantsId = userHttpClient.existsUsersById(dto.participantIds());
 
         if (correctParticipantsId.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Participants not found");
         }
 
-        if (correctParticipantsId.size() > 1 && dto.chatType() == ChatType.PRIVATE) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Private chat can only have one participant");
+        if (dto.chatType() == ChatType.PRIVATE && correctParticipantsId.size() != 1) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Participant not found");
         }
 
         Instant joinedAt = Instant.now();
@@ -61,7 +65,7 @@ public class ChatService {
         if (dto.chatType() == ChatType.PRIVATE) {
             ChatParticipant participant = new ChatParticipant();
             participant.setChat(chat);
-            participant.setUserId(dto.participantIds().getFirst());
+            participant.setUserId(correctParticipantsId.getFirst());
             participant.setRole(ChatRole.OWNER);
             participant.setJoinedAt(joinedAt);
             chat.getParticipants().add(participant);
@@ -145,11 +149,14 @@ public class ChatService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Can not set role OWNER");
         }
 
-        ChatParticipant user = findActiveParticipant(dto.userId(), dto.chatId());
         ChatParticipant promoter = findActiveParticipant(promoterId, dto.chatId());
-
         if (promoter.getRole() == ChatRole.MEMBER) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Member can not change role");
+        }
+
+        ChatParticipant user = findActiveParticipant(dto.userId(), dto.chatId());
+        if(user.getRole() == ChatRole.OWNER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Can not change OWNER role");
         }
 
         user.setRole(dto.role());
