@@ -140,6 +140,26 @@ class MessageServiceTest {
     }
 
     @Test
+    void getSliceHandlesMessagesWithoutReplyOrForwardReferences() {
+        Message item = message("item", 10L, 1L, "plain text", null);
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.of(0, 50)))
+                .thenReturn(new SliceImpl<>(List.of(item), PageRequest.of(0, 50), false));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        Slice<MessageResponse> result = service.getSlice(1L, 10L, 50, 0);
+
+        MessageResponse response = result.getContent().getFirst();
+        assertThat(response.content()).isEqualTo("plain text");
+        assertThat(response.repliedMessage()).isNull();
+        assertThat(response.forwardedMessage()).isNull();
+        verify(messageRepository, never()).findAllById(any());
+    }
+
+    @Test
     void deleteByIdDeletesOnlyMediaLinksThatAreNoLongerReferenced() {
         Message deleted = message("deleted", 10L, 1L, "with media", List.of("keep", "remove"));
         Message remaining = message("remaining", 10L, 2L, "still uses media", List.of("keep"));

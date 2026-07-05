@@ -98,8 +98,8 @@ public class MessageService {
                 item -> new MessageResponse(
                         item,
                         reactions.getOrDefault(item.getId(), Set.of()),
-                        referencedMessages.get(item.getRepliedMessageId()),
-                        referencedMessages.get(item.getForwardedMessageId())
+                        item.getRepliedMessageId() == null ? null : referencedMessages.get(item.getRepliedMessageId()),
+                        item.getForwardedMessageId() == null ? null : referencedMessages.get(item.getForwardedMessageId())
                 )
         );
     }
