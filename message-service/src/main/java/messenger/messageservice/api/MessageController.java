@@ -17,8 +17,6 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
-import java.util.Set;
-
 import static messenger.commonlibs.Constants.USER_ID_HEADER;
 
 @Validated
@@ -41,11 +39,10 @@ public class MessageController {
                 .readStatus(false)
                 .editStatus(false)
                 .sendAt(Instant.now())
-                .repliedMessageId(request.repliedMessageId() != null ? request.repliedMessageId() : "")
+                .repliedMessageId(request.repliedMessageId())
+                .forwardedFromMessageId(request.forwardedFromMessageId())
                 .build();
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(
-                messageService.saveAndPublish(dto, request.forwardedFromMessageId()), Set.of()
-        ));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageService.saveAndPublish(dto));
     }
 
     @GetMapping("/chat/{chatId}")

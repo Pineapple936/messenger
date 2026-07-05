@@ -18,19 +18,18 @@ import java.util.List;
 @Document(collection = "message")
 @NoArgsConstructor
 public class Message {
-    Message(MessageDto dto, Message xRepliedMessage, ForwardedMessage forwardedMessage) {
+    Message(MessageDto dto, Message repliedMessage, Message forwardedMessage) {
         chatId = dto.chatId();
         userId = dto.userId();
-        content = forwardedMessage == null ? dto.content() : forwardedMessage.getContent();
+        content = forwardedMessage == null ? dto.content() : null;
         readStatus = dto.readStatus();
         editStatus = dto.editStatus();
         sendAt = dto.sendAt();
-        repliedMessage = xRepliedMessage;
-        this.forwardedMessage = forwardedMessage;
+        repliedMessageId = repliedMessage == null ? null : repliedMessage.getId();
+        forwardedMessageId = forwardedMessage == null ? null : forwardedMessage.getId();
 
-        List<String> sourcePhotoLinks = forwardedMessage == null ? dto.photoLinks() : forwardedMessage.getPhotoLinks();
-        if(sourcePhotoLinks != null) {
-            photoLinks = List.copyOf(sourcePhotoLinks);
+        if(forwardedMessage == null && dto.photoLinks() != null) {
+            photoLinks = List.copyOf(dto.photoLinks());
         }
     }
 
@@ -66,9 +65,9 @@ public class Message {
     @NonNull
     private Instant sendAt;
 
-    @Field(name = "replied_message")
-    private Message repliedMessage;
+    @Field(name = "replied_message_id")
+    private String repliedMessageId;
 
-    @Field(name = "forwarded_message")
-    private ForwardedMessage forwardedMessage;
+    @Field(name = "forwarded_message_id")
+    private String forwardedMessageId;
 }

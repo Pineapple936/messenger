@@ -1,6 +1,6 @@
 package messenger.messageservice.api.dto;
 
-import messenger.messageservice.domain.ForwardedMessage;
+import messenger.messageservice.domain.Message;
 
 import java.time.Instant;
 import java.util.List;
@@ -11,7 +11,7 @@ public record ForwardedMessageInfo(
         List<String> photoLinks,
         Instant sendAt
 ) {
-    public ForwardedMessageInfo(ForwardedMessage message) {
+    public ForwardedMessageInfo(Message message) {
         this(
                 message.getUserId(),
                 message.getContent(),

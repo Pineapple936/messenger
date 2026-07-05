@@ -1,6 +1,5 @@
 package messenger.commonlibs.dto.messageservice;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
@@ -21,7 +20,7 @@ public record MessageDto(
         @Positive
         Long userId,
 
-        @NotBlank
+        @Pattern(regexp = "^$|\\S.*")
         String content,
 
         @NotNull
@@ -37,6 +36,9 @@ public record MessageDto(
 
         @Pattern(regexp = "^$|\\S.*")
         String repliedMessageId,
+
+        @Pattern(regexp = "\\S.*")
+        String forwardedFromMessageId,
 
         ForwardedMessageDto forwardedMessage
 ) {

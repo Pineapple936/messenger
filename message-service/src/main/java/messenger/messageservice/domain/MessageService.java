@@ -46,22 +46,18 @@ public class MessageService {
     private String chatUserKeyPattern;
 
     @Transactional
-    public Message saveAndPublish(MessageDto dto, String forwardedFromMessageId) {
+    public MessageResponse saveAndPublish(MessageDto dto) {
         if (!isChatMember(dto.userId(), dto.chatId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
         }
 
-        if (forwardedFromMessageId != null && dto.repliedMessageId() != null && !dto.repliedMessageId().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A message cannot be a reply and a forwarded message at the same time");
-        }
-
-        ForwardedMessage forwardedMessage = null;
-        if (forwardedFromMessageId != null) {
-            Message source = findById(forwardedFromMessageId);
+        Message forwardedMessage = null;
+        if (dto.forwardedFromMessageId() != null) {
+            Message source = findById(dto.forwardedFromMessageId());
             if (!isChatMember(dto.userId(), source.getChatId())) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User cannot access the source message");
             }
-            forwardedMessage = new ForwardedMessage(source);
+            forwardedMessage = forwardedSource(source);
         }
 
         Message repliedMessage = null;
@@ -74,8 +70,8 @@ public class MessageService {
 
         Message message = new Message(dto, repliedMessage, forwardedMessage);
         Message saved = messageRepository.save(message);
-        messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved));
-        return saved;
+        messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved, forwardedMessage));
+        return new MessageResponse(saved, Set.of(), repliedMessage, forwardedMessage);
     }
 
     public Message findById(String id) {
@@ -91,13 +87,20 @@ public class MessageService {
 
         Pageable page = PageRequest.of(offset, limit);
         Slice<Message> messageSlice = messageRepository.findByChatIdOrderBySendAtDescIdDesc(chatId, page);
+        List<Message> messages = messageSlice.getContent();
+        Map<String, Message> referencedMessages = findReferencedMessages(messages);
         Map<String, Set<ReactionOnMessage>> reactions = reactionHttpClient.getReactions(new ReactionsOnMessageListRequest(
                 userId,
-                messageSlice.stream().map(Message::getId).toList()
+                messages.stream().map(Message::getId).toList()
         )).reactions();
 
         return messageSlice.map(
-                item -> new MessageResponse(item, reactions.getOrDefault(item.getId(), Set.of()))
+                item -> new MessageResponse(
+                        item,
+                        reactions.getOrDefault(item.getId(), Set.of()),
+                        referencedMessages.get(item.getRepliedMessageId()),
+                        referencedMessages.get(item.getForwardedMessageId())
+                )
         );
     }
 
@@ -171,7 +174,7 @@ public class MessageService {
             );
         }
 
-        if (message.getForwardedMessage() != null) {
+        if (message.getForwardedMessageId() != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Forwarded messages cannot be edited");
         }
 
@@ -198,10 +201,9 @@ public class MessageService {
             );
         }
 
-        String mediaSourceId = mediaSourceId(message);
-        List<String> photoLinks = message.getPhotoLinks();
+        List<String> photoLinks = photoLinks(message);
         messageRepository.deleteById(messageId);
-        deleteMediaIfUnreferenced(mediaSourceId, photoLinks);
+        deleteMediaIfUnreferenced(photoLinks);
         messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
                 message.getId(),
                 message.getChatId(),
@@ -218,15 +220,12 @@ public class MessageService {
             redisTemplate.delete(keys);
         }
 
-        Map<String, List<String>> mediaBySource = messageRepository.findByChatId(chatId).stream()
-                .filter(message -> message.getPhotoLinks() != null && !message.getPhotoLinks().isEmpty())
-                .collect(Collectors.toMap(
-                        this::mediaSourceId,
-                        Message::getPhotoLinks,
-                        (left, right) -> left
-                ));
+        List<String> photoLinks = messageRepository.findByChatId(chatId).stream()
+                .flatMap(message -> photoLinks(message).stream())
+                .distinct()
+                .toList();
         messageRepository.deleteByChatId(chatId);
-        mediaBySource.forEach(this::deleteMediaIfUnreferenced);
+        deleteMediaIfUnreferenced(photoLinks);
     }
 
     public void evictChatMemberCache(Long chatId, Long userId) {
@@ -250,20 +249,43 @@ public class MessageService {
         return hasUser;
     }
 
-    private String mediaSourceId(Message message) {
-        return message.getForwardedMessage() == null
-                ? message.getId()
-                : message.getForwardedMessage().getOriginalMessageId();
+    private Message forwardedSource(Message message) {
+        if (message.getForwardedMessageId() == null) {
+            return message;
+        }
+        return findById(message.getForwardedMessageId());
     }
 
-    private void deleteMediaIfUnreferenced(String sourceMessageId, List<String> photoLinks) {
-        if (photoLinks == null || photoLinks.isEmpty()) {
+    private Map<String, Message> findReferencedMessages(List<Message> messages) {
+        Set<String> referenceIds = messages.stream()
+                .flatMap(message -> java.util.stream.Stream.of(message.getRepliedMessageId(), message.getForwardedMessageId()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (referenceIds.isEmpty()) {
+            return Map.of();
+        }
+        return messageRepository.findAllById(referenceIds).stream()
+                .collect(Collectors.toMap(Message::getId, message -> message));
+    }
+
+    private List<String> photoLinks(Message message) {
+        return message.getPhotoLinks() == null ? List.of() : message.getPhotoLinks();
+    }
+
+    private void deleteMediaIfUnreferenced(List<String> photoLinks) {
+        if (photoLinks.isEmpty()) {
             return;
         }
-        if (messageRepository.existsById(sourceMessageId)
-                || messageRepository.existsByForwardedMessageOriginalMessageId(sourceMessageId)) {
+        Set<String> referencedPhotoLinks = messageRepository.findByPhotoLinksIn(photoLinks).stream()
+                .flatMap(message -> photoLinks(message).stream())
+                .collect(Collectors.toSet());
+        List<String> unreferencedPhotoLinks = photoLinks.stream()
+                .filter(photoLink -> !referencedPhotoLinks.contains(photoLink))
+                .distinct()
+                .toList();
+        if (unreferencedPhotoLinks.isEmpty()) {
             return;
         }
-        mediaHttpClient.deleteByListName(photoLinks);
+        mediaHttpClient.deleteByListName(unreferencedPhotoLinks);
     }
 }
