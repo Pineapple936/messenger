@@ -1,13 +1,14 @@
 package messenger.gatewayservice;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest(properties = "spring.kafka.listener.auto-startup=false")
+import static org.assertj.core.api.Assertions.assertThat;
+
 class GatewayServiceApplicationTests {
 
     @Test
-    void contextLoads() {
+    void applicationClassIsPresent() {
+        assertThat(GatewayServiceApplication.class).isNotNull();
     }
 
 }

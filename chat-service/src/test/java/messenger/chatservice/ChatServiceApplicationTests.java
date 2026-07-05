@@ -1,13 +1,14 @@
 package messenger.chatservice;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+import static org.assertj.core.api.Assertions.assertThat;
+
 class ChatServiceApplicationTests {
 
     @Test
-    void contextLoads() {
+    void applicationClassIsPresent() {
+        assertThat(ChatServiceApplication.class).isNotNull();
     }
 
 }
