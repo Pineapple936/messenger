@@ -25,6 +25,8 @@ public class AuthTokenValidationFilter implements WebFilter {
     private static final Logger log = LoggerFactory.getLogger(AuthTokenValidationFilter.class);
     private static final String AUTH_PATH_PREFIX = "/auth/";
     private static final String VALIDATE_PATH = "/auth/validate";
+    private static final String MESSAGE_WS_PATH = "/message";
+    private static final String MESSAGE_WS_BROWSER_PATH = "/ws-message";
     private static final String AUTH_UNAVAILABLE_MESSAGE = "Authentication service unavailable";
     private static final String USER_ID_HEADER = "X-User-Id";
 
@@ -51,7 +53,7 @@ public class AuthTokenValidationFilter implements WebFilter {
                     });
         }
 
-        String authorizationHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        String authorizationHeader = resolveAuthorizationHeader(exchange);
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             return writeResponse(exchange, HttpStatus.UNAUTHORIZED, "Missing or invalid Authorization header");
         }
@@ -95,6 +97,33 @@ public class AuthTokenValidationFilter implements WebFilter {
                     return writeResponse(exchange, HttpStatus.SERVICE_UNAVAILABLE, AUTH_UNAVAILABLE_MESSAGE)
                             .then(Mono.empty());
                 });
+    }
+
+    private String resolveAuthorizationHeader(ServerWebExchange exchange) {
+        String authorizationHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (authorizationHeader != null && !authorizationHeader.isBlank()) {
+            return authorizationHeader;
+        }
+
+        if (!isBrowserWebSocketRequest(exchange)) {
+            return authorizationHeader;
+        }
+
+        String token = exchange.getRequest().getQueryParams().getFirst("token");
+        if (token == null || token.isBlank()) {
+            return authorizationHeader;
+        }
+
+        return "Bearer " + token;
+    }
+
+    private boolean isBrowserWebSocketRequest(ServerWebExchange exchange) {
+        String path = exchange.getRequest().getPath().value();
+        String upgrade = exchange.getRequest().getHeaders().getFirst(HttpHeaders.UPGRADE);
+
+        return (MESSAGE_WS_PATH.equals(path) || MESSAGE_WS_BROWSER_PATH.equals(path))
+                && exchange.getRequest().getMethod() == HttpMethod.GET
+                && "websocket".equalsIgnoreCase(upgrade);
     }
 
     private Mono<Void> writeResponse(ServerWebExchange exchange, HttpStatus status, String message) {

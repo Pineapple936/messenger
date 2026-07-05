@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 @Order(Ordered.LOWEST_PRECEDENCE - 100)
 public class MessageWebSocketBridgeFilter implements WebFilter {
     private static final String MESSAGE_PATH = "/message";
+    private static final String BROWSER_MESSAGE_PATH = "/ws-message";
     private static final String USER_ID_HEADER = "X-User-Id";
 
     private final MessageBridgeWebSocketHandler webSocketHandler;
@@ -49,7 +50,7 @@ public class MessageWebSocketBridgeFilter implements WebFilter {
         String path = exchange.getRequest().getPath().value();
         String upgrade = exchange.getRequest().getHeaders().getFirst(HttpHeaders.UPGRADE);
 
-        return MESSAGE_PATH.equals(path)
+        return (MESSAGE_PATH.equals(path) || BROWSER_MESSAGE_PATH.equals(path))
                 && exchange.getRequest().getMethod() == HttpMethod.GET
                 && "websocket".equalsIgnoreCase(upgrade);
     }

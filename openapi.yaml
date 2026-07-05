@@ -30,7 +30,9 @@ paths:
         '201':
           description: User registered
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWTAuthentificationDto'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
@@ -51,7 +53,9 @@ paths:
         '200':
           description: Tokens issued
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWTAuthentificationDto'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -73,7 +77,9 @@ paths:
         '200':
           description: Tokens refreshed
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWTAuthentificationDto'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -657,6 +663,20 @@ components:
       content:
         application/json: {}
   schemas:
+    JWTAuthentificationDto:
+      type: object
+      required: [token, refreshToken]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          example: eyJhbGciOiJIUzI1NiJ9.access
+        refreshToken:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          example: eyJhbGciOiJIUzI1NiJ9.refresh
     UserRegistrationDto:
       type: object
       required: [email, password, name, tag]
