@@ -852,13 +852,8 @@ components:
           example: [65f0c2e5a6f8d45000112233, 65f0c2e5a6f8d45000112234]
     CreateReactionDto:
       type: object
-      required: [chatId, messageId, reactionType]
+      required: [messageId, reactionType]
       properties:
-        chatId:
-          type: integer
-          format: int64
-          minimum: 1
-          example: 10
         messageId:
           type: string
           minLength: 1

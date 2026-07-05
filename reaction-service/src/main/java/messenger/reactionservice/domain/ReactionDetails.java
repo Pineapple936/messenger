@@ -19,8 +19,8 @@ import java.time.LocalDateTime;
 )
 @NoArgsConstructor
 public class ReactionDetails {
-    ReactionDetails(Long xUserId, CreateReactionDto dto) {
-        chatId = dto.chatId();
+    ReactionDetails(Long xUserId, CreateReactionDto dto, Long chatId) {
+        this.chatId = chatId;
         messageId = dto.messageId();
         userId = xUserId;
         reactionType = dto.reactionType();

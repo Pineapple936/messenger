@@ -108,6 +108,15 @@ public class MessageService {
         return messageRepository.existsByUserIdAndId(userId, messageId);
     }
 
+    @Transactional(readOnly = true)
+    public MessageAccessInfoDto getMessageAccessInfo(Long userId, String messageId) {
+        Message message = findById(messageId);
+        if (!isChatMember(userId, message.getChatId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+        }
+        return new MessageAccessInfoDto(message.getId(), message.getChatId());
+    }
+
     @Transactional
     public void readMessageById(Long userId, String messageId) {
         Message message = findById(messageId);

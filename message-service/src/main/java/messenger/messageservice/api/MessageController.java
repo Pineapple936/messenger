@@ -3,6 +3,7 @@ package messenger.messageservice.api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
+import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.messageservice.api.dto.CreateMessage;
 import messenger.messageservice.api.dto.MessageEditDto;
@@ -57,6 +58,12 @@ public class MessageController {
     public ResponseEntity<Boolean> isMessageOwner(@PathVariable String messageId,
                                                   @PathVariable Long userId) {
         return ResponseEntity.ok(messageService.isMessageOwner(userId, messageId));
+    }
+
+    @GetMapping("/{messageId}/access")
+    public ResponseEntity<MessageAccessInfoDto> getMessageAccessInfo(@PathVariable String messageId,
+                                                                     @RequestHeader(USER_ID_HEADER) Long userId) {
+        return ResponseEntity.ok(messageService.getMessageAccessInfo(userId, messageId));
     }
 
     @PutMapping("/edit")

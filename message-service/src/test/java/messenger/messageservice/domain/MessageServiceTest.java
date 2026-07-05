@@ -1,6 +1,7 @@
 package messenger.messageservice.domain;
 
 import messenger.commonlibs.dto.messageservice.MessageDto;
+import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListRequest;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListResponse;
 import messenger.messageservice.api.dto.MessageResponse;
@@ -21,6 +22,7 @@ import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -157,6 +160,34 @@ class MessageServiceTest {
         assertThat(response.repliedMessage()).isNull();
         assertThat(response.forwardedMessage()).isNull();
         verify(messageRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void getMessageAccessInfoReturnsChatIdWhenUserIsChatMember() {
+        Message message = message("message-1", 10L, 2L, "text", null);
+
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+
+        MessageAccessInfoDto result = service.getMessageAccessInfo(1L, "message-1");
+
+        assertThat(result.messageId()).isEqualTo("message-1");
+        assertThat(result.chatId()).isEqualTo(10L);
+    }
+
+    @Test
+    void getMessageAccessInfoRejectsUserOutsideChat() {
+        Message message = message("message-1", 10L, 2L, "text", null);
+
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(false);
+        when(chatHttpClient.hasUser(10L, 1L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.getMessageAccessInfo(1L, "message-1"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Chat not found or user is not a member");
     }
 
     @Test

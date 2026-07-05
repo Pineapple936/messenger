@@ -20,8 +20,8 @@ import java.time.LocalDateTime;
 )
 @NoArgsConstructor
 public class Reaction {
-    Reaction(@Valid CreateReactionDto dto) {
-        chatId = dto.chatId();
+    Reaction(@Valid CreateReactionDto dto, Long chatId) {
+        this.chatId = chatId;
         messageId = dto.messageId();
         reactionType = dto.reactionType();
         count = 1L;
