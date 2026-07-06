@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.MessageDto;
+import messenger.commonlibs.dto.messageservice.ForwardedMessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
 import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
@@ -93,7 +94,8 @@ public class UserWebSocketSessions {
                 messageDto.content(),
                 messageDto.editStatus(),
                 messageDto.sendAt() != null ? messageDto.sendAt().toString() : null,
-                messageDto.photoLinks()
+                messageDto.photoLinks(),
+                messageDto.forwardedMessage()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -329,7 +331,8 @@ public class UserWebSocketSessions {
             String content,
             Boolean editStatus,
             String sendAt,
-            java.util.List<String> photoLinks
+            java.util.List<String> photoLinks,
+            ForwardedMessageDto forwardedMessage
     ) {
     }
 

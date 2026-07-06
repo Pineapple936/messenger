@@ -3,6 +3,7 @@ package messenger.messageservice.api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
+import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.messageservice.api.dto.CreateMessage;
 import messenger.messageservice.api.dto.MessageEditDto;
@@ -17,8 +18,6 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
-import java.util.Set;
-
 import static messenger.commonlibs.Constants.USER_ID_HEADER;
 
 @Validated
@@ -41,9 +40,10 @@ public class MessageController {
                 .readStatus(false)
                 .editStatus(false)
                 .sendAt(Instant.now())
-                .repliedMessageId(request.repliedMessageId() != null ? request.repliedMessageId() : "")
+                .repliedMessageId(request.repliedMessageId())
+                .forwardedFromMessageId(request.forwardedFromMessageId())
                 .build();
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new MessageResponse(messageService.saveAndPublish(dto), Set.of()));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageService.saveAndPublish(dto));
     }
 
     @GetMapping("/chat/{chatId}")
@@ -58,6 +58,12 @@ public class MessageController {
     public ResponseEntity<Boolean> isMessageOwner(@PathVariable String messageId,
                                                   @PathVariable Long userId) {
         return ResponseEntity.ok(messageService.isMessageOwner(userId, messageId));
+    }
+
+    @GetMapping("/{messageId}/access")
+    public ResponseEntity<MessageAccessInfoDto> getMessageAccessInfo(@PathVariable String messageId,
+                                                                     @RequestHeader(USER_ID_HEADER) Long userId) {
+        return ResponseEntity.ok(messageService.getMessageAccessInfo(userId, messageId));
     }
 
     @PutMapping("/edit")

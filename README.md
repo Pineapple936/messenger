@@ -1,288 +1,256 @@
 # Messenger
 
-Полноценный мессенджер: микросервисный Java-бэкенд + React-фронтенд.
+Backend мессенджера на микросервисной архитектуре.
 
-> **Примечание:** фронтенд написан искусственным интеллектом.
+Ключевые элементы:
+
+- единая точка входа через `gateway-service`;
+- JWT-аутентификация и валидация токена на gateway;
+- асинхронные события через Kafka;
+- модель `database-per-service` (у каждого сервиса своя база).
 
 ## Что реализовано
 
 - Регистрация, логин, refresh/validate JWT.
-- CRUD-операции по пользователям, поиск по тегу, аватары.
-- Приватные и групповые чаты с ролями (OWNER / ADMIN / MEMBER).
-- Создание/чтение/редактирование/удаление сообщений с вложениями (фото).
-- Цитирование сообщений (repliedMessageId).
-- Реакции на сообщения (эмодзи).
+- CRUD-операции по пользователям.
+- Создание/получение/удаление чатов.
+- Создание/чтение/редактирование/пометка прочтения/удаление сообщений.
+- Ответы на сообщения и пересылка сообщений через ссылку на исходное сообщение.
+- Реакции на сообщения.
+- Загрузка, скачивание и проксирование медиафайлов.
 - Доставка событий в реальном времени через WebSocket в gateway.
-- Индикатор набора текста («печатает...»), присутствие (онлайн/оффлайн).
-- Загрузка и отдача медиафайлов через Yandex Disk (media-service).
 - Событийная синхронизация между сервисами через Kafka.
-- Redis-кеш membership в `message-service` и rate limiter в `gateway-service`.
+- OpenAPI-спецификация в `openapi.yaml`.
 
 ## Архитектура сервисов
 
-| Сервис                   |   Порт | Хранилище                          | Назначение                                                 |
-| ------------------------ | -----: | ---------------------------------- | ---------------------------------------------------------- |
-| `gateway-service`        | `8080` | Redis (`6380`)                     | Маршрутизация, JWT-проверка, rate limiting, WebSocket-мост |
-| `authentication-service` | `8081` | PostgreSQL (`5433`)                | Регистрация, логин, JWT, валидация токена                  |
-| `user-service`           | `8082` | PostgreSQL (`5432`)                | Профиль пользователя, аватары, теги, поиск                 |
-| `chat-service`           | `8083` | PostgreSQL (`5434`)                | Чаты, участники, роли, обновление `lastMessageAt`          |
-| `message-service`        | `8084` | MongoDB (`27017`) + Redis (`6379`) | Сообщения, вложения, цитаты, статусы прочтения, Redis-кеш  |
-| `reaction-service`       | `8085` | PostgreSQL (`5435`)                | Реакции на сообщения                                       |
-| `media-service`          | `8086` | Yandex Disk                        | Загрузка и отдача медиафайлов                              |
-| `common-libs`            |      — | —                                  | Общие DTO, маперы, константы                               |
+| Сервис                   |   Порт | Хранилище           | Назначение                                           |
+| ------------------------ | -----: | ------------------- | ---------------------------------------------------- |
+| `gateway-service`        | `8080` | нет                 | Маршрутизация, проверка токена, WebSocket-мост       |
+| `authentication-service` | `8081` | PostgreSQL (`5433`) | Регистрация, логин, JWT, валидация токена            |
+| `user-service`           | `8082` | PostgreSQL (`5432`) | Профиль пользователя                                 |
+| `chat-service`           | `8083` | PostgreSQL (`5434`) | Чаты, участники, обновление `lastMessageAt`          |
+| `message-service`        | `8084` | MongoDB (`27017`)   | Хранение сообщений, read-статусы, публикация событий |
+| `reaction-service`       | `8085` | PostgreSQL (`5435`) | Реакции на сообщения                                 |
+| `media-service`          | `8086` | файловое хранилище  | Загрузка, скачивание и проксирование файлов          |
+| `common-libs`            |      - | -                   | Общие DTO, мапперы, константы                        |
 
 ## Как проходят запросы
 
-```text
-Client ──► Gateway ──► Auth (validate JWT) ──► Target service
-                  └──► 401 при невалидном токене
-```
-
-1. Клиент отправляет запрос на `gateway-service` (`:8080`).
-2. Для всех путей, кроме `/auth/**`, gateway вызывает `/auth/validate` и применяет rate limiting через Redis.
+1. Клиент отправляет запрос на `gateway-service`.
+2. Для всех путей, кроме `/auth/**`, gateway вызывает `/auth/validate`.
 3. Если токен валиден, gateway добавляет заголовок `X-User-Id` и проксирует запрос в целевой сервис.
+4. Если токен невалиден, возвращается `401 Unauthorized`.
+
+Упрощенная схема:
+
+```text
+Client -> Gateway -> Auth(validate JWT) -> Target service
+                     \-> 401 при невалидном токене
+```
 
 ## Основные сценарии
 
 ### Регистрация
 
-1. `POST /auth/register` создаёт учётные данные в `authentication-service`.
-2. `authentication-service` создаёт профиль в `user-service` (внутренний вызов).
+1. `POST /auth/register` создает учетные данные в `authentication-service`.
+2. `authentication-service` создает профиль в `user-service` (внутренний вызов).
 3. В ответ возвращается пара токенов (`token`, `refreshToken`).
 
 ### Отправка сообщения
 
 1. `POST /message` сохраняет сообщение в `message-service` (MongoDB).
-2. `message-service` проверяет membership через Redis-кеш и при необходимости через `chat-service`.
-3. `message-service` публикует событие в Kafka топики `chat-messages` и `gateway-message-events`.
-4. `chat-service` обновляет `lastMessageAt` у чата.
-5. `gateway-service` читает событие из `gateway-message-events` и отправляет его онлайн-участникам по WebSocket.
+2. `message-service` публикует событие в Kafka (`chat-messages`).
+3. `chat-service` обновляет `lastMessageAt` у чата.
+4. `gateway-service` читает событие и отправляет его онлайн-участникам чата по WebSocket.
 
-### Реакция на сообщение
-
-1. `POST /reaction/add` добавляет реакцию в `reaction-service` (PostgreSQL).
-2. `reaction-service` публикует событие в `gateway-reaction-events`.
-3. `gateway-service` доставляет событие участникам чата по WebSocket.
-
-### Индикатор набора текста
-
-1. Клиент отправляет по WebSocket сообщение `{"type":"typing","chatId":N}`.
-2. `gateway-service` запрашивает участников чата у `chat-service` и рассылает typing-событие остальным онлайн-участникам.
-3. На фронтенде typing отображается в заголовке активного чата и в строке предпросмотра в списке чатов.
-
-### Загрузка медиафайлов
-
-1. `POST /media/upload` (multipart) принимает файл в `media-service`.
-2. `media-service` загружает файл на Yandex Disk и возвращает `{ url, fileName }`.
-3. `GET /media/download/{fileName}` и `GET /media/proxy?publicUrl=...` — отдача файлов через gateway.
-
-### Редактирование и удаление сообщения
-
-1. `PUT /message/edit` меняет содержимое сообщения.
-2. `DELETE /message/{messageId}` доступно только владельцу сообщения.
-3. Изменения публикуются в `gateway-message-events` и доставляются участникам по WebSocket.
+Для ответа используется `repliedMessageId`, для пересылки - `forwardedFromMessageId`.
+Пересланное сообщение хранит ссылку на исходное сообщение, а не копию вложенного документа.
 
 ### Прочтение сообщения
 
-1. `PUT /message/read/{messageId}` или `PUT /message/read` обновляет `readStatus`.
-2. Gateway доставляет read-событие остальным участникам чата.
+1. `PUT /message/read/{messageId}` или `PUT /message/read`.
+2. `message-service` меняет статус `readStatus`.
+3. Публикуется событие `message-read-event`.
+4. `gateway-service` отправляет read-событие второму участнику чата.
 
 ### Удаление пользователя
 
-1. `DELETE /user` удаляет профиль и учётные данные (через вызов в `authentication-service`).
+1. `DELETE /user` удаляет профиль и учетные данные (через вызов в `auth-service`).
 2. `user-service` публикует `user-delete`.
 3. `chat-service` удаляет чаты пользователя и публикует `chat-delete`.
-4. `message-service` и `reaction-service` удаляют данные удалённых чатов.
+4. `message-service` удаляет сообщения удаленных чатов.
 
-## API (через gateway на `:8080`)
+## API (через gateway)
 
 ### Auth (`/auth`)
 
-| Метод    | Путь             | Описание                             |
-| -------- | ---------------- | ------------------------------------ |
-| `POST`   | `/auth/register` | Регистрация                          |
-| `POST`   | `/auth/login`    | Логин, возвращает токены             |
-| `POST`   | `/auth/refresh`  | Обновление токена                    |
-| `GET`    | `/auth/validate` | Валидация токена (внутренний вызов)  |
-| `DELETE` | `/auth`          | Удаление учётных данных (внутренний) |
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `GET /auth/validate`
+- `DELETE /auth` (внутренний вызов, обычно вызывается из `user-service`)
 
 ### User (`/user`)
 
-| Метод    | Путь                     | Описание                            |
-| -------- | ------------------------ | ----------------------------------- |
-| `POST`   | `/user`                  | Создание профиля (внутренний)       |
-| `GET`    | `/user/me`               | Мой профиль                         |
-| `GET`    | `/user/{userId}`         | Профиль по ID                       |
-| `GET`    | `/user/search?tag={tag}` | Поиск по тегу (до 10 результатов)   |
-| `GET`    | `/user/exists/{userId}`  | Проверка существования пользователя |
-| `POST`   | `/user/edit`             | Редактирование профиля              |
-| `DELETE` | `/user`                  | Удаление аккаунта                   |
+- `POST /user`
+- `GET /user/{userId}`
+- `GET /user/me`
+- `GET /user/exists/{userId}`
+- `POST /user/edit`
+- `DELETE /user`
 
 ### Chat (`/chat`)
 
-| Метод    | Путь                                   | Описание                                     |
-| -------- | -------------------------------------- | -------------------------------------------- |
-| `POST`   | `/chat`                                | Создание чата                                |
-| `POST`   | `/chat/users`                          | Добавить участника в групповой чат           |
-| `GET`    | `/chat?limit=&offset=`                 | Список чатов с пагинацией                    |
-| `PUT`    | `/chat/{chatId}/name/{newName}`        | Переименовать чат (только OWNER/ADMIN)       |
-| `PUT`    | `/chat/{chatId}/my-name`               | Установить своё имя чата                     |
-| `PUT`    | `/chat/{chatId}/avatar`                | Обновить аватар чата                         |
-| `PUT`    | `/chat/role`                           | Изменить роль участника (OWNER/ADMIN/MEMBER) |
-| `GET`    | `/chat/{chatId}/users`                 | Список участников                            |
-| `GET`    | `/chat/{chatId}/users/{userId}/exists` | Проверить наличие пользователя в чате        |
-| `DELETE` | `/chat/{chatId}`                       | Удалить чат                                  |
-| `DELETE` | `/chat/leave/{chatId}`                 | Покинуть чат                                 |
+- `POST /chat`
+- `GET /chat?limit={limit}&offset={offset}`
+- `PUT /chat/users`
+- `PUT /chat/{chatId}/name/{newName}`
+- `PUT /chat/{chatId}/my-name`
+- `PUT /chat/{chatId}/avatar`
+- `PUT /chat/role`
+- `GET /chat/{chatId}/users`
+- `DELETE /chat/{chatId}`
+- `DELETE /chat/leave/{chatId}`
 
 ### Message (`/message`)
 
-| Метод    | Путь                                    | Описание                                    |
-| -------- | --------------------------------------- | ------------------------------------------- |
-| `POST`   | `/message`                              | Отправить сообщение (текст, фото, цитата)   |
-| `GET`    | `/message/chat/{chatId}?limit=&offset=` | История сообщений с пагинацией              |
-| `PUT`    | `/message/edit`                         | Редактировать сообщение                     |
-| `PUT`    | `/message/read/{messageId}`             | Отметить сообщение как прочитанное          |
-| `PUT`    | `/message/read`                         | Отметить все сообщения чата как прочитанные |
-| `DELETE` | `/message/{messageId}`                  | Удалить сообщение                           |
+- `POST /message`
+- `GET /message/chat/{chatId}?limit={limit}&offset={offset}`
+- `PUT /message/edit`
+- `PUT /message/read/{messageId}`
+- `PUT /message/read`
+- `DELETE /message/{messageId}`
 
 ### Reaction (`/reaction`)
 
-| Метод    | Путь                                   | Описание                                          |
-| -------- | -------------------------------------- | ------------------------------------------------- |
-| `POST`   | `/reaction/add`                        | Добавить реакцию                                  |
-| `GET`    | `/reaction/message/{messageId}`        | Реакции на сообщение                              |
-| `POST`   | `/reaction/message/batchByUser`        | Реакции текущего пользователя на список сообщений |
-| `DELETE` | `/reaction/message/{messageId}/{type}` | Удалить конкретную реакцию                        |
-| `DELETE` | `/reaction/message/{messageId}`        | Удалить все реакции пользователя на сообщение     |
+- `POST /reaction/add`
+- `GET /reaction/message/{messageId}`
+- `DELETE /reaction/message/{messageId}/{reactionType}`
 
 ### Media (`/media`)
 
-| Метод    | Путь                         | Описание                                                   |
-| -------- | ---------------------------- | ---------------------------------------------------------- |
-| `POST`   | `/media/upload`              | Загрузить файл (multipart), возвращает `{ url, fileName }` |
-| `GET`    | `/media/download/{fileName}` | Скачать файл по имени                                      |
-| `GET`    | `/media/proxy?publicUrl=`    | Проксировать публичный URL                                 |
-| `GET`    | `/media/list`                | Список файлов                                              |
-| `DELETE` | `/media/{fileName}`          | Удалить файл                                               |
-| `DELETE` | `/media`                     | Удалить список файлов (batch)                              |
+- `POST /media/upload`
+- `GET /media/download/{fileName}`
+- `GET /media/proxy?url={url}`
 
-## WebSocket
+Полное описание публичного API через gateway находится в `openapi.yaml`.
 
-Подключение: `ws://localhost:8080/ws` с заголовком `Authorization: Bearer <token>`.
+## Kafka топики и роли
 
-| Направление     | Тип события          | Описание                                |
-| --------------- | -------------------- | --------------------------------------- |
-| Клиент → Сервер | `presence_subscribe` | Подписаться на присутствие пользователя |
-| Клиент → Сервер | `typing`             | Уведомление о наборе текста в чате      |
-| Сервер → Клиент | `MESSAGE_CREATED`    | Новое сообщение                         |
-| Сервер → Клиент | `MESSAGE_EDITED`     | Сообщение отредактировано               |
-| Сервер → Клиент | `MESSAGE_DELETED`    | Сообщение удалено                       |
-| Сервер → Клиент | `MESSAGE_READ`       | Сообщение прочитано                     |
-| Сервер → Клиент | `REACTION_UPDATED`   | Реакция добавлена/удалена               |
-| Сервер → Клиент | `typing`             | Пользователь набирает текст             |
-| Сервер → Клиент | `presence`           | Обновление статуса присутствия          |
-
-## Kafka топики
-
-| Топик                     | Producer           | Consumer(s)                           | Назначение                                       |
-| ------------------------- | ------------------ | ------------------------------------- | ------------------------------------------------ |
-| `chat-messages`           | `message-service`  | `chat-service`                        | Обновление `lastMessageAt`                       |
-| `gateway-message-events`  | `message-service`  | `gateway-service`                     | Доставка событий сообщений по WebSocket          |
-| `gateway-reaction-events` | `reaction-service` | `gateway-service`                     | Доставка событий реакций по WebSocket            |
-| `message-delete`          | `message-service`  | `reaction-service`                    | Каскадное удаление реакций удалённых сообщений   |
-| `chat-delete`             | `chat-service`     | `message-service`, `reaction-service` | Каскадное удаление сообщений и реакций чата      |
-| `user-delete`             | `user-service`     | `chat-service`                        | Каскадное удаление чатов удалённого пользователя |
+| Топик                | Producer          | Consumer                          | Назначение                            |
+| -------------------- | ----------------- | --------------------------------- | ------------------------------------- |
+| `chat-messages`              | `message-service`  | `chat-service`, `gateway-service` | Новые сообщения                       |
+| `message-read-event`         | `message-service`  | `gateway-service`                 | События прочтения                     |
+| `message-delete-event`       | `message-service`  | `gateway-service`                 | События удаления сообщений            |
+| `gateway-message-events`     | `message-service`  | `gateway-service`                 | События сообщений для WebSocket       |
+| `gateway-reaction-events`    | `reaction-service` | `gateway-service`                 | События реакций для WebSocket         |
+| `chat-delete`                | `chat-service`     | `message-service`                 | Каскадное удаление сообщений чата     |
+| `user-delete`                | `user-service`     | `chat-service`                    | Каскадное удаление чатов пользователя |
 
 ## Конфигурация
 
-Для локального запуска `.env` не требуется — в `docker-compose` заданы значения по умолчанию.
+Для локального запуска `.env` не требуется: в `docker-compose` уже заданы значения по умолчанию.
 
-| Переменная                | Сервис(ы)                        | Значение по умолчанию   | Описание                |
-| ------------------------- | -------------------------------- | ----------------------- | ----------------------- |
-| `KAFKA_BOOTSTRAP_SERVERS` | все сервисы                      | `localhost:9092`        | Адрес Kafka брокера     |
-| `DB_NAME`                 | auth, user, chat, reaction       | `auth` / `user` / ...   | Имя базы данных         |
-| `DB_USER`                 | auth, user, chat, reaction       | `postgres`              | Пользователь PostgreSQL |
-| `DB_PASSWORD`             | auth, user, chat, reaction       | `postgres`              | Пароль PostgreSQL       |
-| `DB_HOST`                 | message-service                  | `localhost`             | Хост MongoDB            |
-| `DB_USERNAME`             | message-service                  | `admin`                 | Пользователь MongoDB    |
-| `REDIS_PASSWORD`          | gateway-service, message-service | `password`              | Пароль Redis            |
-| `DISK_TOKEN`              | media-service                    | —                       | OAuth-токен Yandex Disk |
-| `AUTH_SERVICE_URI`        | gateway-service                  | `http://localhost:8081` | URL auth-service        |
-| `USER_SERVICE_URI`        | gateway-service                  | `http://localhost:8082` | URL user-service        |
-| `CHAT_SERVICE_URI`        | gateway-service                  | `http://localhost:8083` | URL chat-service        |
-| `MESSAGE_SERVICE_URI`     | gateway-service                  | `http://localhost:8084` | URL message-service     |
-| `REACTION_SERVICE_URI`    | gateway-service                  | `http://localhost:8085` | URL reaction-service    |
-| `MEDIA_SERVICE_URI`       | gateway-service                  | `http://localhost:8086` | URL media-service       |
+Ключевые переменные окружения:
+
+- `KAFKA_BOOTSTRAP_SERVERS` (по умолчанию `localhost:9092`);
+- `AUTH_SERVICE_URL`, `USER_SERVICE_URL`, `CHAT_SERVICE_URL`, `MESSAGE_SERVICE_URL`, `REACTION_SERVICE_URL`, `MEDIA_SERVICE_URL`;
+- `AUTH_SERVICE_URI`, `USER_SERVICE_URI`, `CHAT_SERVICE_URI`, `MESSAGE_SERVICE_URI`, `REACTION_SERVICE_URI`, `MEDIA_SERVICE_URI` для gateway;
+- для PostgreSQL: `DB_NAME`, `DB_USER`, `DB_PASSWORD`;
+- для MongoDB: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_AUTH_SOURCE`, `DB_USERNAME`, `DB_PASSWORD`.
 
 ## Структура репозитория
 
 ```text
 .
-├── authentication-service/   # JWT, регистрация, логин
-├── chat-service/             # Чаты, участники, роли
-├── common-libs/              # Общие DTO, маперы, константы
-├── frontend/                 # React 18 + TypeScript + Vite (SPA)
-├── gateway-service/          # Маршрутизация, WebSocket, rate limiting
-├── media-service/            # Загрузка/отдача медиа через Yandex Disk
-├── message-service/          # Сообщения (MongoDB), цитаты, вложения
-├── reaction-service/         # Реакции на сообщения
-├── user-service/             # Профили пользователей, аватары, поиск
-└── docker-compose.yaml       # Kafka broker
+├── authentication-service
+├── chat-service
+├── common-libs
+├── gateway-service
+├── media-service
+├── message-service
+├── reaction-service
+├── user-service
+├── openapi.yaml
+└── docker-compose.yaml   # Kafka broker
 ```
 
 ## Локальный запуск
 
-**Требования:** Java 21+, Maven, Docker + Docker Compose, Node.js 18+
+Требования:
 
-### 1. Запустить Kafka
+- Java 21+
+- Maven
+- Docker + Docker Compose
+
+### 1) Поднять Kafka
+
+Из корня репозитория:
 
 ```bash
 docker compose up -d
 ```
 
-### 2. Запустить базы данных
+### 2) Поднять базы данных
+
+Из корня репозитория:
 
 ```bash
 docker compose -f authentication-service/docker-compose.yml up -d
 docker compose -f user-service/docker-compose.yml up -d
 docker compose -f chat-service/docker-compose.yaml up -d
-docker compose -f gateway-service/docker-compose.yaml up -d
 docker compose -f message-service/docker-compose.yaml up -d
 docker compose -f reaction-service/docker-compose.yaml up -d
 ```
 
-### 3. Собрать common-libs
+### 3) Собрать `common-libs`
 
 ```bash
-cd common-libs && mvn clean install -DskipTests
+cd common-libs
+mvn clean install -DskipTests
 ```
 
-### 4. Запустить бэкенд-сервисы
+### 4) Запустить сервисы
 
-Каждый сервис — в отдельном терминале:
+Каждую команду запускать в отдельном терминале:
 
 ```bash
 cd authentication-service && mvn spring-boot:run
-cd user-service           && mvn spring-boot:run
-cd chat-service           && mvn spring-boot:run
-cd message-service        && mvn spring-boot:run
-cd reaction-service       && mvn spring-boot:run
-cd media-service          && mvn spring-boot:run   # нужен DISK_TOKEN
-cd gateway-service        && mvn spring-boot:run
+cd user-service && mvn spring-boot:run
+cd chat-service && mvn spring-boot:run
+cd message-service && mvn spring-boot:run
+cd reaction-service && mvn spring-boot:run
+cd media-service && mvn spring-boot:run
+cd gateway-service && mvn spring-boot:run
 ```
 
-### Адреса сервисов
+### 5) Проверить, что сервисы поднялись
 
-| Сервис             | Адрес                   |
-| ------------------ | ----------------------- |
-| Frontend           | `http://localhost:5173` |
-| Gateway (API + WS) | `http://localhost:8080` |
-| Auth               | `http://localhost:8081` |
-| User               | `http://localhost:8082` |
-| Chat               | `http://localhost:8083` |
-| Message            | `http://localhost:8084` |
-| Reaction           | `http://localhost:8085` |
-| Media              | `http://localhost:8086` |
-| Redis (gateway)    | `localhost:6380`        |
-| Redis (message)    | `localhost:6379`        |
-| MongoDB            | `localhost:27017`       |
+- gateway: `http://localhost:8080`
+- auth: `http://localhost:8081`
+- user: `http://localhost:8082`
+- chat: `http://localhost:8083`
+- message: `http://localhost:8084`
+- reaction: `http://localhost:8085`
+- media: `http://localhost:8086`
+
+## Тесты
+
+Из корня репозитория:
+
+```bash
+mvn test
+```
+
+Если запускается отдельный сервис, которому нужен `common-libs`, сначала обновите локальный артефакт:
+
+```bash
+cd common-libs
+mvn install -DskipTests
+```
+
+## Итог
+
+Сейчас это рабочий backend мессенджера на микросервисах с JWT, Kafka и WebSocket-доставкой.
+Сервисы разделены по ответственности и по хранилищам (`database-per-service`), запуск локально описан выше.

@@ -14,4 +14,6 @@ public interface MessageRepository extends MongoRepository<Message, String> {
     Boolean existsByUserIdAndId(Long userId, String id);
 
     List<Message> findByChatId(Long chatId);
+
+    List<Message> findByPhotoLinksIn(List<String> photoLinks);
 }

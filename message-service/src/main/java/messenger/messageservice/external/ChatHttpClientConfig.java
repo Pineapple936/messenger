@@ -7,11 +7,15 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
+import static messenger.commonlibs.Constants.INTERNAL_KEY_HEADER;
+
 @Configuration
 public class ChatHttpClientConfig {
     @Bean
-    RestClient chatRestClient(@Value("${CHAT_SERVICE_URL:http://localhost:8083}") String chatServiceUrl) {
-        return RestClient.builder().baseUrl(chatServiceUrl).build();
+    RestClient chatRestClient(
+            @Value("${CHAT_SERVICE_URL:http://localhost:8083}") String chatServiceUrl,
+            @Value("${INTERNAL_API_KEY:}") String internalApiKey) {
+        return RestClient.builder().baseUrl(chatServiceUrl).defaultHeader(INTERNAL_KEY_HEADER, internalApiKey).build();
     }
 
     @Bean

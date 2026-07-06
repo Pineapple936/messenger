@@ -3,6 +3,7 @@ package messenger.reactionservice.domain;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
+import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.ReactionOnMessage;
 import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
 import messenger.reactionservice.api.dto.CreateReactionDto;
@@ -14,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +30,9 @@ public class ReactionService {
 
     @Transactional
     public Reaction add(Long userId, CreateReactionDto dto) {
+        MessageAccessInfoDto messageAccessInfo = messageHttpClient.getMessageAccessInfo(dto.messageId(), userId);
+        Long chatId = messageAccessInfo.chatId();
+
         List<ReactionDetails> existing = detailsRepository.findByUserIdAndMessageIdForUpdate(userId, dto.messageId());
         if (existing.size() >= 3) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -42,28 +45,27 @@ public class ReactionService {
         }
 
         try {
-            detailsRepository.save(new ReactionDetails(userId, dto));
+            detailsRepository.save(new ReactionDetails(userId, dto, chatId));
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Reaction already exists", e);
         }
 
-        Reaction reaction = reactionRepository.findByMessageIdAndReactionType(
-                dto.messageId(), dto.reactionType()).orElse(null);
-
-        if(reaction != null) {
-            reaction.setCount(reaction.getCount() + 1);
-            Reaction updated = reactionRepository.save(reaction);
-            reactionKafkaProducer.sendReactionEvent(
-                    GatewayReactionEventDto.reactionAdded(dto.chatId(), dto.messageId(), userId, dto.reactionType().name())
-            );
-            return updated;
-        }
-
-        Reaction saved = reactionRepository.save(new Reaction(dto));
+        Reaction saved = incrementOrCreateReaction(dto, chatId);
         reactionKafkaProducer.sendReactionEvent(
-                GatewayReactionEventDto.reactionAdded(dto.chatId(), dto.messageId(), userId, dto.reactionType().name())
+                GatewayReactionEventDto.reactionAdded(chatId, dto.messageId(), userId, dto.reactionType().name())
         );
         return saved;
+    }
+
+    private Reaction incrementOrCreateReaction(CreateReactionDto dto, Long chatId) {
+        Long reactionId = reactionRepository.upsertAndIncrementReturningId(
+                chatId,
+                dto.messageId(),
+                dto.reactionType().name()
+        );
+        return reactionRepository.findById(reactionId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Reaction with id=" + reactionId));
     }
 
     @Transactional(readOnly = true)

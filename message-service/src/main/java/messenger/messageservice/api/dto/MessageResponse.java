@@ -38,25 +38,37 @@ public record MessageResponse(
         @NotNull
         Set<ReactionOnMessage> reactions,
 
-        RepliedMessageInfo repliedMessage
+        RepliedMessageInfo repliedMessage,
+
+        ForwardedMessageInfo forwardedMessage
 ) {
         public MessageResponse(Message message, Set<ReactionOnMessage> reactions) {
+            this(message, reactions, null, null);
+        }
+
+        public MessageResponse(
+                Message message,
+                Set<ReactionOnMessage> reactions,
+                Message repliedMessage,
+                Message forwardedMessage
+        ) {
             this(
                 message.getId(),
                 message.getChatId(),
                 message.getUserId(),
-                message.getContent(),
+                forwardedMessage == null ? message.getContent() : forwardedMessage.getContent(),
                 message.getReadStatus(),
                 message.getEditStatus(),
                 message.getSendAt(),
-                message.getPhotoLinks(),
+                forwardedMessage == null ? message.getPhotoLinks() : forwardedMessage.getPhotoLinks(),
                 reactions,
-                message.getRepliedMessage() == null ? null : new RepliedMessageInfo(
-                    message.getRepliedMessage().getId(),
-                    message.getRepliedMessage().getUserId(),
-                    message.getRepliedMessage().getContent(),
-                    message.getRepliedMessage().getSendAt()
-                )
+                repliedMessage == null ? null : new RepliedMessageInfo(
+                    repliedMessage.getId(),
+                    repliedMessage.getUserId(),
+                    repliedMessage.getContent(),
+                    repliedMessage.getSendAt()
+                ),
+                forwardedMessage == null ? null : new ForwardedMessageInfo(forwardedMessage)
             );
         }
 }

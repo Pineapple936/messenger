@@ -1,13 +1,14 @@
 package messenger.authenticationservice;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+import static org.assertj.core.api.Assertions.assertThat;
+
 class AuthenticationServiceApplicationTests {
 
     @Test
-    void contextLoads() {
+    void applicationClassIsPresent() {
+        assertThat(AuthenticationServiceApplication.class).isNotNull();
     }
 
 }

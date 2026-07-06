@@ -46,15 +46,32 @@ public class MessageService {
     private String chatUserKeyPattern;
 
     @Transactional
-    public Message saveAndPublish(MessageDto dto) {
+    public MessageResponse saveAndPublish(MessageDto dto) {
         if (!isChatMember(dto.userId(), dto.chatId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
         }
 
-        Message message = new Message(dto, messageRepository.findById(dto.repliedMessageId()).orElse(null));
+        Message forwardedMessage = null;
+        if (dto.forwardedFromMessageId() != null) {
+            Message source = findById(dto.forwardedFromMessageId());
+            if (!isChatMember(dto.userId(), source.getChatId())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User cannot access the source message");
+            }
+            forwardedMessage = forwardedSource(source);
+        }
+
+        Message repliedMessage = null;
+        if (dto.repliedMessageId() != null && !dto.repliedMessageId().isEmpty()) {
+            repliedMessage = findById(dto.repliedMessageId());
+            if (!Objects.equals(repliedMessage.getChatId(), dto.chatId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Replied message belongs to another chat");
+            }
+        }
+
+        Message message = new Message(dto, repliedMessage, forwardedMessage);
         Message saved = messageRepository.save(message);
-        messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved));
-        return saved;
+        messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved, forwardedMessage));
+        return new MessageResponse(saved, Set.of(), repliedMessage, forwardedMessage);
     }
 
     public Message findById(String id) {
@@ -70,18 +87,34 @@ public class MessageService {
 
         Pageable page = PageRequest.of(offset, limit);
         Slice<Message> messageSlice = messageRepository.findByChatIdOrderBySendAtDescIdDesc(chatId, page);
+        List<Message> messages = messageSlice.getContent();
+        Map<String, Message> referencedMessages = findReferencedMessages(messages);
         Map<String, Set<ReactionOnMessage>> reactions = reactionHttpClient.getReactions(new ReactionsOnMessageListRequest(
                 userId,
-                messageSlice.stream().map(Message::getId).toList()
+                messages.stream().map(Message::getId).toList()
         )).reactions();
 
         return messageSlice.map(
-                item -> new MessageResponse(item, reactions.getOrDefault(item.getId(), Set.of()))
+                item -> new MessageResponse(
+                        item,
+                        reactions.getOrDefault(item.getId(), Set.of()),
+                        item.getRepliedMessageId() == null ? null : referencedMessages.get(item.getRepliedMessageId()),
+                        item.getForwardedMessageId() == null ? null : referencedMessages.get(item.getForwardedMessageId())
+                )
         );
     }
 
     public Boolean isMessageOwner(Long userId, String messageId) {
         return messageRepository.existsByUserIdAndId(userId, messageId);
+    }
+
+    @Transactional(readOnly = true)
+    public MessageAccessInfoDto getMessageAccessInfo(Long userId, String messageId) {
+        Message message = findById(messageId);
+        if (!isChatMember(userId, message.getChatId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+        }
+        return new MessageAccessInfoDto(message.getId(), message.getChatId());
     }
 
     @Transactional
@@ -150,6 +183,10 @@ public class MessageService {
             );
         }
 
+        if (message.getForwardedMessageId() != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Forwarded messages cannot be edited");
+        }
+
         message.setContent(dto.content());
         message.setEditStatus(true);
         Message saved = messageRepository.save(message);
@@ -173,8 +210,9 @@ public class MessageService {
             );
         }
 
-        if(message.getPhotoLinks() != null) mediaHttpClient.deleteByListName(message.getPhotoLinks());
+        List<String> photoLinks = photoLinks(message);
         messageRepository.deleteById(messageId);
+        deleteMediaIfUnreferenced(photoLinks);
         messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
                 message.getId(),
                 message.getChatId(),
@@ -191,15 +229,17 @@ public class MessageService {
             redisTemplate.delete(keys);
         }
 
-        List<String> files = messageRepository.findByChatId(chatId).stream()
-                .filter(message -> message.getPhotoLinks() != null)
-                .flatMap(message -> message.getPhotoLinks().stream())
+        List<String> photoLinks = messageRepository.findByChatId(chatId).stream()
+                .flatMap(message -> photoLinks(message).stream())
+                .distinct()
                 .toList();
-
-        if (!files.isEmpty()) {
-            mediaHttpClient.deleteByListName(files);
-        }
         messageRepository.deleteByChatId(chatId);
+        deleteMediaIfUnreferenced(photoLinks);
+    }
+
+    public void evictChatMemberCache(Long chatId, Long userId) {
+        String key = chatUserKeyPattern.formatted(chatId, userId);
+        redisTemplate.delete(key);
     }
 
     private boolean isChatMember(Long userId, Long chatId) {
@@ -216,5 +256,45 @@ public class MessageService {
         if(hasUser) redisTemplate.opsForValue().set(key, true, Duration.ofMinutes(chatUserKeyTtlMinutes));
 
         return hasUser;
+    }
+
+    private Message forwardedSource(Message message) {
+        if (message.getForwardedMessageId() == null) {
+            return message;
+        }
+        return findById(message.getForwardedMessageId());
+    }
+
+    private Map<String, Message> findReferencedMessages(List<Message> messages) {
+        Set<String> referenceIds = messages.stream()
+                .flatMap(message -> java.util.stream.Stream.of(message.getRepliedMessageId(), message.getForwardedMessageId()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (referenceIds.isEmpty()) {
+            return Map.of();
+        }
+        return messageRepository.findAllById(referenceIds).stream()
+                .collect(Collectors.toMap(Message::getId, message -> message));
+    }
+
+    private List<String> photoLinks(Message message) {
+        return message.getPhotoLinks() == null ? List.of() : message.getPhotoLinks();
+    }
+
+    private void deleteMediaIfUnreferenced(List<String> photoLinks) {
+        if (photoLinks.isEmpty()) {
+            return;
+        }
+        Set<String> referencedPhotoLinks = messageRepository.findByPhotoLinksIn(photoLinks).stream()
+                .flatMap(message -> photoLinks(message).stream())
+                .collect(Collectors.toSet());
+        List<String> unreferencedPhotoLinks = photoLinks.stream()
+                .filter(photoLink -> !referencedPhotoLinks.contains(photoLink))
+                .distinct()
+                .toList();
+        if (unreferencedPhotoLinks.isEmpty()) {
+            return;
+        }
+        mediaHttpClient.deleteByListName(unreferencedPhotoLinks);
     }
 }
