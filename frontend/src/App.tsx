@@ -72,6 +72,12 @@ type MessageEditDraft = {
   messageId: string;
 };
 
+type ForwardDraft = {
+  message: ChatMessage;
+  sourceMessageId: string;
+  targetChatId: number;
+};
+
 const STATUS_LABELS: Record<RealtimeStatus, string> = {
   offline: "Не в сети",
   connecting: "Подключение",
@@ -263,7 +269,7 @@ function makeLocalMessageId(): string {
 
 function toMessageText(error: unknown): string {
   if (error instanceof ApiError) {
-    return error.message;
+    return formatApiError(error);
   }
 
   if (error instanceof Error) {
@@ -271,6 +277,158 @@ function toMessageText(error: unknown): string {
   }
 
   return "Неожиданная ошибка.";
+}
+
+const API_STATUS_TITLES: Record<number, string> = {
+  400: "Проверьте введённые данные",
+  401: "Нужно снова войти",
+  403: "Недостаточно прав",
+  404: "Данные не найдены",
+  409: "Конфликт данных",
+  413: "Файл слишком большой",
+  429: "Слишком много запросов",
+  500: "Ошибка сервера",
+  502: "Сервис временно недоступен",
+  503: "Сервис временно недоступен",
+  504: "Сервис не отвечает"
+};
+
+const API_FIELD_LABELS: Record<string, string> = {
+  chatId: "Чат",
+  chatType: "Тип чата",
+  content: "Текст сообщения",
+  description: "Описание",
+  email: "Почта",
+  file: "Файл",
+  forwardedFromMessageId: "Пересылаемое сообщение",
+  id: "ID",
+  limit: "Лимит",
+  messageId: "Сообщение",
+  name: "Имя",
+  newName: "Название",
+  newUrl: "Ссылка на фото",
+  offset: "Смещение",
+  participantIds: "Участники",
+  password: "Пароль",
+  photoLinks: "Фото",
+  reactionType: "Реакция",
+  refreshToken: "Refresh-токен",
+  repliedMessageId: "Сообщение для ответа",
+  role: "Роль",
+  tag: "Тег",
+  token: "Токен",
+  userId: "Пользователь"
+};
+
+function formatApiError(error: ApiError): string {
+  const title = API_STATUS_TITLES[error.status] ?? `Ошибка запроса (${error.status})`;
+  const rawMessage = (error.backendMessage ?? error.message).trim();
+  const details = humanizeBackendMessage(rawMessage, error.status);
+
+  if (!details) {
+    return title;
+  }
+
+  if (details === title) {
+    return details;
+  }
+
+  return `${title}\n${details}`;
+}
+
+function humanizeBackendMessage(message: string, status: number): string {
+  if (!message) {
+    return "";
+  }
+
+  if (message === "Internal server error") {
+    return "Попробуйте ещё раз позже.";
+  }
+
+  if (message === "Malformed JSON request body") {
+    return "Запрос сформирован некорректно. Обновите страницу и попробуйте снова.";
+  }
+
+  if (message.startsWith("Missing required header:")) {
+    return "Не хватает данных авторизации. Войдите снова.";
+  }
+
+  if (message.startsWith("Missing required parameter:")) {
+    const param = message.replace("Missing required parameter:", "").trim();
+    return `Не заполнено обязательное поле: ${humanizeFieldName(param)}.`;
+  }
+
+  if (message.includes("Request conflicts with existing data")) {
+    return "Такие данные уже используются. Проверьте тег, почту или участников.";
+  }
+
+  if (status === 401) {
+    return "Сессия истекла или пароль указан неверно.";
+  }
+
+  if (status === 403) {
+    return "У вас нет доступа к этому действию.";
+  }
+
+  if (status === 404) {
+    return "Запрошенный объект уже удалён или недоступен.";
+  }
+
+  const parts = message
+    .split(";")
+    .map((part) => humanizeValidationMessage(part.trim()))
+    .filter(Boolean);
+
+  if (parts.length > 1) {
+    return parts.map((part) => `• ${part}`).join("\n");
+  }
+
+  return parts[0] ?? message;
+}
+
+function humanizeValidationMessage(message: string): string {
+  const [fieldCandidate, ...rest] = message.split(":");
+  if (rest.length === 0) {
+    return translateConstraintText(message);
+  }
+
+  const field = humanizeFieldName(fieldCandidate.trim().split(".").pop() ?? fieldCandidate.trim());
+  const detail = translateConstraintText(rest.join(":").trim());
+  return `${field}: ${detail}`;
+}
+
+function humanizeFieldName(field: string): string {
+  return API_FIELD_LABELS[field] ?? field;
+}
+
+function translateConstraintText(text: string): string {
+  const normalized = text.trim();
+  const lower = normalized.toLowerCase();
+
+  if (lower === "invalid request") return "некорректное значение";
+  if (lower === "must not be blank") return "заполните поле";
+  if (lower === "must not be null") return "обязательное поле";
+  if (lower === "must not be empty") return "список не должен быть пустым";
+  if (lower === "must be a well-formed email address") return "введите корректную почту";
+  if (lower === "must be greater than 0") return "значение должно быть больше 0";
+  if (lower === "must be greater than or equal to 0") return "значение должно быть не меньше 0";
+
+  const sizeMatch = normalized.match(/size must be between (\d+) and (\d+)/i);
+  if (sizeMatch) {
+    return `длина должна быть от ${sizeMatch[1]} до ${sizeMatch[2]} символов`;
+  }
+
+  const maxMatch = normalized.match(/size must be between 0 and (\d+)/i);
+  if (maxMatch) {
+    return `длина должна быть не больше ${maxMatch[1]} символов`;
+  }
+
+  const patternMatch = normalized.match(/must match "(.+)"/i);
+  if (patternMatch) {
+    return "значение не соответствует ожидаемому формату";
+  }
+
+  return normalized;
 }
 
 function messageKey(message: ChatMessage): string {
@@ -772,6 +930,7 @@ function pruneLocalEchoes(current: ChatMessage[], incoming: ChatMessage[]): Chat
       !hasServerId(candidate) &&
       candidate.userId === message.userId &&
       candidate.content === message.content &&
+      Boolean(candidate.forwardedMessage) === Boolean(message.forwardedMessage) &&
       candidate.delivery !== "failed"
     );
 
@@ -785,7 +944,7 @@ function pruneLocalEchoes(current: ChatMessage[], incoming: ChatMessage[]): Chat
 
 function fallbackHistoryMessageId(message: MessageHistoryItem): string {
   const createdAt = message.sendAt ?? message.createdAt ?? "unknown-time";
-  return `history-${message.chatId}-${message.userId}-${createdAt}-${message.content}`;
+  return `history-${message.chatId}-${message.userId}-${createdAt}-${message.content ?? ""}`;
 }
 
 function toHistoryChatMessage(message: MessageHistoryItem, myUserId: number): ChatMessage {
@@ -797,13 +956,14 @@ function toHistoryChatMessage(message: MessageHistoryItem, myUserId: number): Ch
     id: historyMessageId,
     chatId: message.chatId,
     userId: message.userId,
-    content: message.content,
+    content: message.content ?? "",
     createdAt: message.sendAt ?? message.createdAt ?? null,
     serverId: historyServerId ?? undefined,
     edited: Boolean(message.editStatus),
     delivery: mine && Boolean(message.readStatus) ? "read" : "sent",
     origin: mine ? "local" : "remote",
     repliedMessage: message.repliedMessage ?? null,
+    forwardedMessage: message.forwardedMessage ?? null,
     photoLinks: message.photoLinks ?? null
   };
 }
@@ -1005,6 +1165,8 @@ function App() {
 
   // Forward message
   const [forwardModalMessage, setForwardModalMessage] = useState<ChatMessage | null>(null);
+  const [forwardSearchQuery, setForwardSearchQuery] = useState("");
+  const [forwardDraft, setForwardDraft] = useState<ForwardDraft | null>(null);
 
   // Emoji picker
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
@@ -1729,7 +1891,10 @@ function App() {
     try {
       const slice = await api.getMessages(chatId, HISTORY_PAGE_SIZE, page);
       const incoming = slice.content.map((message) => toHistoryChatMessage(message, profile.userId));
-      ensureUserNamesLoaded(incoming.map((message) => message.userId));
+      ensureUserNamesLoaded(incoming.flatMap((message) => [
+        message.userId,
+        ...(message.forwardedMessage ? [message.forwardedMessage.userId] : [])
+      ]));
 
       setMessagesByChat((previous) => {
         const current = previous[key] ?? [];
@@ -2016,7 +2181,12 @@ function App() {
           continue;
         }
 
-        if (candidate.userId !== event.userId || candidate.content !== event.content || candidate.delivery === "failed") {
+        if (
+          candidate.userId !== event.userId
+          || candidate.content !== event.content
+          || Boolean(candidate.forwardedMessage) !== Boolean(event.forwardedMessage)
+          || candidate.delivery === "failed"
+        ) {
           continue;
         }
 
@@ -2046,6 +2216,7 @@ function App() {
           ...matchedLocal,
           serverId: incomingServerId ?? matchedLocal.serverId,
           edited: typeof event.editStatus === "boolean" ? event.editStatus : matchedLocal.edited,
+          forwardedMessage: event.forwardedMessage ?? matchedLocal.forwardedMessage ?? null,
           delivery: matchedLocal.delivery === "read" ? "read" : "sent"
         };
 
@@ -2060,7 +2231,11 @@ function App() {
           return false;
         }
 
-        if (candidate.userId !== event.userId || candidate.content !== event.content) {
+        if (
+          candidate.userId !== event.userId
+          || candidate.content !== event.content
+          || Boolean(candidate.forwardedMessage) !== Boolean(event.forwardedMessage)
+        ) {
           return false;
         }
 
@@ -2085,12 +2260,16 @@ function App() {
           delivery: "sent",
           origin: currentProfile && event.userId === currentProfile.userId ? "local" : "remote",
           repliedMessage: null,
+          forwardedMessage: event.forwardedMessage ?? null,
           photoLinks: Array.isArray(event.photoLinks) ? event.photoLinks : null
         }])
       };
     });
 
-    ensureUserNamesLoaded([event.userId]);
+    ensureUserNamesLoaded([
+      event.userId,
+      ...(event.forwardedMessage ? [event.forwardedMessage.userId] : [])
+    ]);
 
     // Clear typing indicator for the sender immediately on message received
     const typingKey = `${event.chatId}:${event.userId}`;
@@ -2756,6 +2935,21 @@ function App() {
     [knownChats]
   );
 
+  const forwardTargetChats = useMemo(() => {
+    const query = forwardSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return sortedChats;
+    }
+
+    return sortedChats.filter((chat) => {
+      const knownType = chatTypeById[chat.chatId];
+      const displayName = chat.chatName
+        || (knownType === "PRIVATE" && chat.peerUserId ? getUserDisplayName(chat.peerUserId) : "Чат");
+      const peerName = chat.peerUserId ? getUserDisplayName(chat.peerUserId) : "";
+      return `${displayName} ${peerName}`.toLowerCase().includes(query);
+    });
+  }, [chatTypeById, forwardSearchQuery, getUserDisplayName, sortedChats]);
+
   const presenceTargetUserIds = useMemo(
     () => {
       const ids = new Set<number>();
@@ -2968,6 +3162,16 @@ function App() {
     }
   }, [activeChatId, currentMessages, messageEditDraft]);
 
+  useEffect(() => {
+    if (!forwardDraft) {
+      return;
+    }
+
+    if (activeChatId !== forwardDraft.targetChatId) {
+      setForwardDraft(null);
+    }
+  }, [activeChatId, forwardDraft]);
+
   const editingMessage = useMemo(
     () => (messageEditDraft ? currentMessages.find((message) => message.id === messageEditDraft.messageId) ?? null : null),
     [currentMessages, messageEditDraft]
@@ -2995,6 +3199,7 @@ function App() {
       && messageMenuMine
       && messageMenuMessage.delivery !== "pending"
       && messageMenuMessage.delivery !== "failed"
+      && !messageMenuMessage.forwardedMessage
   );
   const chatMenuChat = useMemo(
     () => (chatMenu ? sortedChats.find((chat) => chat.chatId === chatMenu.chatId) ?? null : null),
@@ -3198,29 +3403,33 @@ function App() {
     const normalizedName = profileNameDraft.trim();
     const normalizedTag = profileTagDraft.trim();
     const normalizedDescription = profileDescriptionDraft.trim();
-    const payload: { name?: string; tag?: string; description?: string } = {};
 
-    if (normalizedName && normalizedName !== profile.name) {
-      if (normalizedName.length < 4) {
-        setNotice("Имя должно быть не короче 4 символов.");
-        return;
-      }
-      payload.name = normalizedName;
+    if (normalizedName.length < 4 || normalizedName.length > 50) {
+      setNotice("Имя должно быть от 4 до 50 символов.");
+      return;
     }
 
-    if (normalizedDescription !== (profile.description ?? "")) {
-      payload.description = normalizedDescription;
+    if (normalizedTag.length < 3 || normalizedTag.length > 15) {
+      setNotice("Тег должен быть от 3 до 15 символов.");
+      return;
     }
 
-    if (normalizedTag && normalizedTag !== profile.tag) {
-      if (normalizedTag.length < 3 || normalizedTag.length > 15) {
-        setNotice("Тег должен быть от 3 до 15 символов.");
-        return;
-      }
-      payload.tag = normalizedTag;
+    if (normalizedDescription.length > 50) {
+      setNotice("Описание должно быть не длиннее 50 символов.");
+      return;
     }
 
-    if (Object.keys(payload).length === 0) {
+    const payload = {
+      name: normalizedName,
+      tag: normalizedTag,
+      description: normalizedDescription || null
+    };
+
+    if (
+      payload.name === profile.name
+      && payload.tag === profile.tag
+      && (payload.description ?? "") === (profile.description ?? "")
+    ) {
       setNotice("Нет изменений для сохранения.");
       return;
     }
@@ -3314,6 +3523,7 @@ function App() {
     setComposerValue("");
     setMessageEditDraft(null);
     setReplyToMessage(null);
+    setForwardDraft(null);
     setGroupInfoOpen(false);
     setChatRenameOpen(false);
   };
@@ -3453,22 +3663,35 @@ function App() {
 
   const handleForwardMessage = useCallback((message: ChatMessage) => {
     setMessageMenu(null);
+    setForwardSearchQuery("");
     setForwardModalMessage(message);
   }, []);
 
-  const handleConfirmForward = useCallback(async (targetChatId: number) => {
+  const handleConfirmForward = useCallback((targetChatId: number) => {
     const msg = forwardModalMessage;
-    if (!msg || !profile) return;
-    setForwardModalMessage(null);
-    const content = msg.content || "";
-    const photoLinks = msg.photoLinks && msg.photoLinks.length > 0 ? msg.photoLinks : null;
-    try {
-      await api.sendMessage(targetChatId, content, null, photoLinks);
-      setNotice("Сообщение переслано.");
-    } catch {
-      setNotice("Не удалось переслать сообщение.");
+    if (!msg) return;
+    const sourceMessageId = normalizeServerId(msg.serverId);
+    if (!sourceMessageId) {
+      setForwardModalMessage(null);
+      setNotice("Нельзя переслать неотправленное сообщение.");
+      return;
     }
-  }, [api, forwardModalMessage, profile]);
+
+    setForwardDraft({ message: msg, sourceMessageId, targetChatId });
+    setReplyToMessage(null);
+    setMessageEditDraft(null);
+    setPendingFiles([]);
+    setComposerValue("");
+    setEmojiPickerOpen(false);
+    setForwardModalMessage(null);
+    setForwardSearchQuery("");
+    navigate("/");
+    setActiveDraftPeerUserId(null);
+    setActiveChatId(targetChatId);
+    setGroupInfoOpen(false);
+    setChatRenameOpen(false);
+    requestAnimationFrame(() => composerTextareaRef.current?.focus());
+  }, [forwardModalMessage, navigate]);
 
   const handleGroupAvatarUpload = async (file: File) => {
     if (!activeChatId) return;
@@ -3554,7 +3777,7 @@ function App() {
     event.preventDefault();
     dragCounterRef.current = 0;
     setIsDraggingOver(false);
-    if (messageEditDraft) return;
+    if (messageEditDraft || forwardDraft) return;
     const files = Array.from(event.dataTransfer.files);
     if (files.length === 0) return;
     setPendingFiles((prev) => {
@@ -3566,7 +3789,7 @@ function App() {
       return [...prev, ...newImages.slice(0, canAdd), ...newOther];
     });
     composerTextareaRef.current?.focus();
-  }, [messageEditDraft]);
+  }, [forwardDraft, messageEditDraft]);
 
   const resizeTextarea = useCallback(() => {
     const el = composerTextareaRef.current;
@@ -3590,7 +3813,7 @@ function App() {
   }, [resizeTextarea]);
 
   const handleComposerPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (messageEditDraft) return;
+    if (messageEditDraft || forwardDraft) return;
     const images = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
       .map((item) => item.getAsFile())
@@ -3603,10 +3826,11 @@ function App() {
       if (images.length > canAdd) setNotice("Максимум 10 фото в одном сообщении");
       return [...prev, ...images.slice(0, canAdd)];
     });
-  }, [messageEditDraft]);
+  }, [forwardDraft, messageEditDraft]);
 
   const handleSetReplyTo = useCallback((message: ChatMessage) => {
     setReplyToMessage(message);
+    setForwardDraft(null);
     setMessageMenu(null);
     requestAnimationFrame(() => {
       composerTextareaRef.current?.focus();
@@ -3615,6 +3839,10 @@ function App() {
 
   const handleCancelReply = useCallback(() => {
     setReplyToMessage(null);
+  }, []);
+
+  const handleCancelForwardDraft = useCallback(() => {
+    setForwardDraft(null);
   }, []);
 
   const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
@@ -3626,7 +3854,7 @@ function App() {
     const content = composerValue.trim();
     const filesToUpload = messageEditDraft ? [] : [...pendingFiles];
 
-    if (!content && filesToUpload.length === 0) {
+    if (!content && filesToUpload.length === 0 && !forwardDraft) {
       return;
     }
 
@@ -3678,7 +3906,7 @@ function App() {
         updateMessageContentById(
           targetMessage.chatId,
           targetMessage.id,
-          updated.content,
+          updated.content ?? "",
           Boolean(updated.editStatus)
         );
         setMessageEditDraft(null);
@@ -3693,6 +3921,73 @@ function App() {
         } else {
           setNotice(toMessageText(error));
         }
+      }
+      return;
+    }
+
+    if (forwardDraft) {
+      if (activeChatId === null || activeChatId !== forwardDraft.targetChatId) {
+        setNotice("Выберите чат для пересылки.");
+        return;
+      }
+
+      const sourceMessage = forwardDraft.message;
+      const sourceMessageId = forwardDraft.sourceMessageId;
+      const targetChatId = activeChatId;
+      const messageId = makeLocalMessageId();
+      const sendAt = formatLocalDateTime(Date.now());
+      const timeline = timelineRef.current;
+      const shouldAutoScroll = timeline ? isNearBottom(timeline) : stickToBottomRef.current;
+
+      appendMessage({
+        id: messageId,
+        chatId: targetChatId,
+        userId: profile.userId,
+        content: sourceMessage.content,
+        createdAt: sendAt,
+        delivery: "pending",
+        origin: "local",
+        forwardedMessage: {
+          userId: sourceMessage.forwardedMessage?.userId ?? sourceMessage.userId,
+          content: sourceMessage.content || null,
+          photoLinks: sourceMessage.photoLinks ?? null,
+          sendAt: sourceMessage.createdAt
+        },
+        photoLinks: sourceMessage.photoLinks ?? null
+      });
+      upsertChat(targetChatId, null, sendAt, undefined, {
+        text: sourceMessage.content || null,
+        userId: profile.userId,
+        hasMedia: Boolean(sourceMessage.photoLinks?.length)
+      });
+      setForwardDraft(null);
+      setComposerValue("");
+      setPendingFiles([]);
+      setEmojiPickerOpen(false);
+      lastTypingSentRef.current = 0;
+
+      if (shouldAutoScroll) {
+        stickToBottomRef.current = true;
+        requestAnimationFrame(() => scrollToBottom("smooth"));
+      }
+
+      try {
+        const saved = await api.forwardMessage(targetChatId, sourceMessageId);
+        const forwarded = toHistoryChatMessage(saved, profile.userId);
+        updateMessageServerId(targetChatId, messageId, normalizeServerId(forwarded.serverId) ?? forwarded.id);
+        updateMessageDelivery(targetChatId, messageId, forwarded.delivery);
+        ensureUserNamesLoaded([
+          forwarded.userId,
+          ...(forwarded.forwardedMessage ? [forwarded.forwardedMessage.userId] : [])
+        ]);
+        upsertChat(targetChatId, null, forwarded.createdAt ?? sendAt, undefined, {
+          text: forwarded.content || null,
+          userId: forwarded.userId,
+          hasMedia: Boolean(forwarded.photoLinks?.length)
+        });
+      } catch (error) {
+        updateMessageDelivery(targetChatId, messageId, "failed");
+        setNotice(toMessageText(error));
       }
       return;
     }
@@ -3759,7 +4054,7 @@ function App() {
         ? {
             id: capturedRepliedId ?? capturedReplyTo.id,
             userId: capturedReplyTo.userId,
-            content: capturedReplyTo.content,
+            content: capturedReplyTo.content || null,
             sendAt: capturedReplyTo.createdAt
           }
         : null,
@@ -3889,6 +4184,12 @@ function App() {
       return;
     }
 
+    if (message.forwardedMessage) {
+      setNotice("Пересланные сообщения нельзя редактировать.");
+      return;
+    }
+
+    setForwardDraft(null);
     setComposerValue(message.content);
     setMessageEditDraft({
       chatId: message.chatId,
@@ -3951,7 +4252,7 @@ function App() {
           ...prev,
           [serverId]: Array.from(new Set([...(prev[serverId] ?? []), reactionType]))
         }));
-        setNotice(err instanceof ApiError ? `Не удалось убрать реакцию (${err.status}: ${err.message})` : "Не удалось убрать реакцию: нет соединения с сервером.");
+        setNotice(`Не удалось убрать реакцию\n${toMessageText(err)}`);
       }
     } else {
       setMyReactionsByMessageId((prev) => ({
@@ -3986,7 +4287,7 @@ function App() {
             );
           return { ...prev, [serverId]: next };
         });
-        setNotice(err instanceof ApiError ? `Не удалось поставить реакцию (${err.status}: ${err.message})` : "Не удалось поставить реакцию: нет соединения с сервером.");
+        setNotice(`Не удалось поставить реакцию\n${toMessageText(err)}`);
       }
     }
     setMessageMenu(null);
@@ -4137,7 +4438,7 @@ function App() {
   const isSettingsProfileEditRoute = route === "/settings/profile/edit";
   const isSettingsAppearanceRoute = route === "/settings/appearance";
   const isChatRoute = route === "/";
-  const canSubmitMessage = (composerValue.trim().length > 0 || pendingFiles.length > 0) && (!createChatBusy || isEditingMessage);
+  const canSubmitMessage = (composerValue.trim().length > 0 || pendingFiles.length > 0 || Boolean(forwardDraft)) && (!createChatBusy || isEditingMessage || Boolean(forwardDraft));
 
   if (!tokensState) {
     return (
@@ -4533,7 +4834,7 @@ function App() {
             onDragOver={handleChatDragOver}
             onDrop={handleChatDrop}
           >
-            {isDraggingOver && !messageEditDraft && (
+            {isDraggingOver && !messageEditDraft && !forwardDraft && (
               <div className="tg-drop-overlay">
                 <div className="tg-drop-overlay-inner">
                   <svg viewBox="0 0 24 24" aria-hidden="true" className="tg-drop-icon">
@@ -4721,6 +5022,25 @@ function App() {
                               <span className="tg-reply-text">{message.repliedMessage.content || "Медиафайл"}</span>
                             </div>
                           )}
+                          {message.forwardedMessage && (
+                            <div className="tg-forwarded-message">
+                              <AvatarImage
+                                name={getUserDisplayName(message.forwardedMessage.userId)}
+                                seed={message.forwardedMessage.userId}
+                                avatarUrl={avatarUrlByUserId[message.forwardedMessage.userId] ?? undefined}
+                                size="xs"
+                                fetchMedia={api.fetchMediaBlob}
+                              />
+                              <div className="tg-forwarded-body">
+                                <div className="tg-forwarded-line">
+                                  <span className="tg-forwarded-label">Переслано от</span>
+                                  <span className="tg-forwarded-author">
+                                    {getUserDisplayName(message.forwardedMessage.userId)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                           {message.photoLinks && message.photoLinks.length > 0 && (() => {
                             const validLinks = message.photoLinks.filter((url): url is string => url != null);
                             return (
@@ -4801,6 +5121,34 @@ function App() {
                         className="tg-composer-strip-close"
                         onClick={handleCancelReply}
                         aria-label="Отмена ответа"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                      </button>
+                    </div>
+                  )}
+                  {forwardDraft && (
+                    <div className="tg-composer-strip tg-composer-forward">
+                      <AvatarImage
+                        name={getUserDisplayName(forwardDraft.message.forwardedMessage?.userId ?? forwardDraft.message.userId)}
+                        seed={forwardDraft.message.forwardedMessage?.userId ?? forwardDraft.message.userId}
+                        avatarUrl={avatarUrlByUserId[forwardDraft.message.forwardedMessage?.userId ?? forwardDraft.message.userId] ?? undefined}
+                        size="xs"
+                        fetchMedia={api.fetchMediaBlob}
+                      />
+                      <div className="tg-composer-strip-body">
+                        <div className="tg-composer-strip-label">
+                          Переслать от {getUserDisplayName(forwardDraft.message.forwardedMessage?.userId ?? forwardDraft.message.userId)}
+                        </div>
+                        <div className="tg-composer-strip-text">
+                          {forwardDraft.message.content
+                            || (forwardDraft.message.photoLinks?.length ? "📎 Медиафайл" : "Сообщение")}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="tg-composer-strip-close"
+                        onClick={handleCancelForwardDraft}
+                        aria-label="Отмена пересылки"
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
                       </button>
@@ -4895,12 +5243,12 @@ function App() {
                     <button
                       type="button"
                       className="tg-composer-attach"
-                      style={isEditingMessage ? { visibility: "hidden" } : undefined}
+                      style={isEditingMessage || forwardDraft ? { visibility: "hidden" } : undefined}
                       onClick={() => fileInputRef.current?.click()}
                       aria-label="Прикрепить файл"
                       title="Прикрепить файл"
-                      disabled={isEditingMessage}
-                      tabIndex={isEditingMessage ? -1 : undefined}
+                      disabled={isEditingMessage || Boolean(forwardDraft)}
+                      tabIndex={isEditingMessage || forwardDraft ? -1 : undefined}
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
@@ -4909,8 +5257,9 @@ function App() {
                     <textarea
                       ref={composerTextareaRef}
                       rows={1}
-                      placeholder={isEditingMessage ? "Изменить сообщение..." : "Написать сообщение..."}
+                      placeholder={isEditingMessage ? "Изменить сообщение..." : forwardDraft ? "Нажмите отправить для пересылки" : "Написать сообщение..."}
                       value={composerValue}
+                      readOnly={Boolean(forwardDraft)}
                       onChange={handleComposerChange}
                       onPaste={handleComposerPaste}
                       onKeyDown={(event) => {
@@ -4926,6 +5275,7 @@ function App() {
                       onClick={() => setEmojiPickerOpen((v) => !v)}
                       aria-label="Эмодзи"
                       title="Эмодзи"
+                      disabled={Boolean(forwardDraft)}
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <circle cx="12" cy="12" r="10"/>
@@ -4938,8 +5288,8 @@ function App() {
                       type="submit"
                       className="tg-composer-send"
                       disabled={!canSubmitMessage}
-                      aria-label={isEditingMessage ? "Сохранить изменения" : "Отправить сообщение"}
-                      title={canSubmitMessage ? (isEditingMessage ? "Сохранить" : "Отправить") : "Введите сообщение"}
+                      aria-label={isEditingMessage ? "Сохранить изменения" : forwardDraft ? "Переслать сообщение" : "Отправить сообщение"}
+                      title={canSubmitMessage ? (isEditingMessage ? "Сохранить" : forwardDraft ? "Переслать" : "Отправить") : "Введите сообщение"}
                     >
                       {isEditingMessage ? (
                         <svg className="tg-send-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -5823,17 +6173,44 @@ function App() {
 
       {/* ── Forward Message Modal ─────────────────── */}
       {forwardModalMessage && (
-        <div className="tg-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setForwardModalMessage(null); }}>
+        <div className="tg-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) { setForwardModalMessage(null); setForwardSearchQuery(""); } }}>
           <div className="tg-modal">
             <div className="tg-modal-head">
               <h2>Переслать сообщение</h2>
-              <button type="button" className="tg-modal-close" onClick={() => setForwardModalMessage(null)}>✕</button>
+              <button type="button" className="tg-modal-close" onClick={() => { setForwardModalMessage(null); setForwardSearchQuery(""); }}>✕</button>
             </div>
             <div className="tg-forward-preview">
-              <p className="tg-meta">{forwardModalMessage.content || "📎 Медиафайл"}</p>
+              <p className="tg-forward-preview-label">
+                {forwardModalMessage.forwardedMessage
+                  ? `Переслано от ${getUserDisplayName(forwardModalMessage.forwardedMessage.userId)}`
+                  : `От ${getUserDisplayName(forwardModalMessage.userId)}`}
+              </p>
+              <p className="tg-forward-preview-text">
+                {forwardModalMessage.content || "📎 Медиафайл"}
+              </p>
+            </div>
+            <div className="tg-forward-search">
+              <div className="tg-search-box">
+                <span className="tg-search-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16">
+                    <circle cx="7" cy="7" r="4.7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M10.4 10.4L14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <input
+                  type="text"
+                  value={forwardSearchQuery}
+                  onChange={(e) => setForwardSearchQuery(e.target.value)}
+                  placeholder="Кому переслать..."
+                  autoFocus
+                />
+              </div>
             </div>
             <div className="tg-forward-chat-list">
-              {sortedChats.map((chat) => {
+              {forwardTargetChats.length === 0 && (
+                <p className="tg-forward-empty">Чаты не найдены.</p>
+              )}
+              {forwardTargetChats.map((chat) => {
                 const knownType = chatTypeById[chat.chatId];
                 const displayName = chat.chatName
                   || (knownType === "PRIVATE" && chat.peerUserId ? getUserDisplayName(chat.peerUserId) : "Чат");

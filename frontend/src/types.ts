@@ -35,7 +35,14 @@ export type KnownChat = {
 export type RepliedMessageInfo = {
   id: string;
   userId: number;
-  content: string;
+  content: string | null;
+  sendAt: string | null;
+};
+
+export type ForwardedMessageInfo = {
+  userId: number;
+  content: string | null;
+  photoLinks?: string[] | null;
   sendAt: string | null;
 };
 
@@ -43,12 +50,13 @@ export type MessageHistoryItem = {
   id?: string | number | null;
   chatId: number;
   userId: number;
-  content: string;
+  content: string | null;
   readStatus?: boolean | null;
   editStatus?: boolean | null;
   sendAt?: string | null;
   createdAt?: string | null;
   repliedMessage?: RepliedMessageInfo | null;
+  forwardedMessage?: ForwardedMessageInfo | null;
   photoLinks?: string[] | null;
 };
 
@@ -83,6 +91,7 @@ export type ChatMessage = {
   delivery: "pending" | "sent" | "read" | "failed";
   origin: "local" | "remote";
   repliedMessage?: RepliedMessageInfo | null;
+  forwardedMessage?: ForwardedMessageInfo | null;
   photoLinks?: string[] | null;
 };
 
@@ -100,9 +109,9 @@ export type RegisterPayload = {
 };
 
 export type EditProfilePayload = {
-  name?: string | null;
-  tag?: string | null;
-  description?: string | null;
+  name: string;
+  tag: string;
+  description: string | null;
 };
 
 export type ChatParticipantDto = {

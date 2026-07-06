@@ -1,3 +1,5 @@
+import type { ForwardedMessageInfo } from "../types";
+
 export type RealtimeStatus = "offline" | "connecting" | "online" | "reconnecting" | "error";
 
 export type SocketMessageEvent = {
@@ -9,6 +11,7 @@ export type SocketMessageEvent = {
   editStatus?: boolean;
   sendAt?: string;
   photoLinks?: string[] | null;
+  forwardedMessage?: ForwardedMessageInfo | null;
 };
 
 export type SocketMessageReadEvent = {
@@ -118,6 +121,18 @@ function isSocketMessageEvent(payload: unknown): payload is SocketMessageEvent {
     typeof value.userId === "number" &&
     (typeof value.content === "string" || value.content == null) &&
     (value.editStatus == null || typeof value.editStatus === "boolean") &&
+    (value.sendAt == null || typeof value.sendAt === "string") &&
+    (value.forwardedMessage == null || isForwardedMessageInfo(value.forwardedMessage))
+  );
+}
+
+function isForwardedMessageInfo(payload: unknown): payload is ForwardedMessageInfo {
+  if (!payload || typeof payload !== "object") return false;
+  const value = payload as Record<string, unknown>;
+  return (
+    typeof value.userId === "number" &&
+    (typeof value.content === "string" || value.content == null) &&
+    (value.photoLinks == null || (Array.isArray(value.photoLinks) && value.photoLinks.every((link) => typeof link === "string"))) &&
     (value.sendAt == null || typeof value.sendAt === "string")
   );
 }

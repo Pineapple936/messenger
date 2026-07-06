@@ -25,12 +25,24 @@ type RequestOptions = {
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
+type BackendErrorPayload = {
+  name?: string;
+  message?: string;
+  localDateTime?: string;
+};
+
 export class ApiError extends Error {
   status: number;
+  backendName?: string;
+  backendMessage?: string;
+  occurredAt?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, payload?: BackendErrorPayload) {
     super(message);
     this.status = status;
+    this.backendName = payload?.name;
+    this.backendMessage = payload?.message;
+    this.occurredAt = payload?.localDateTime;
   }
 }
 
@@ -75,6 +87,12 @@ function decodeJwtUserId(token: string): number {
 }
 
 function toErrorMessage(payload: unknown, fallback: string): string {
+  const normalized = normalizeErrorPayload(payload);
+
+  if (normalized?.message?.trim()) {
+    return normalized.message;
+  }
+
   if (typeof payload === "string" && payload.trim()) {
     return payload;
   }
@@ -91,6 +109,39 @@ function toErrorMessage(payload: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function normalizeErrorPayload(payload: unknown): BackendErrorPayload | null {
+  if (!payload) {
+    return null;
+  }
+
+  if (typeof payload === "string") {
+    try {
+      return normalizeErrorPayload(JSON.parse(payload));
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof payload !== "object") {
+    return null;
+  }
+
+  const dictionary = payload as Record<string, unknown>;
+  const name = typeof dictionary.name === "string" ? dictionary.name : undefined;
+  const message = typeof dictionary.message === "string" ? dictionary.message : undefined;
+  const localDateTime = typeof dictionary.localDateTime === "string" ? dictionary.localDateTime : undefined;
+
+  if (!name && !message && !localDateTime) {
+    return null;
+  }
+
+  return {
+    name,
+    message,
+    localDateTime
+  };
 }
 
 async function parsePayload(response: Response): Promise<unknown> {
@@ -191,9 +242,11 @@ export function createApiClient(config: ApiConfig) {
 
     const payload = await parsePayload(response);
     if (!response.ok) {
+      const errorPayload = normalizeErrorPayload(payload) ?? undefined;
       throw new ApiError(
         response.status,
-        toErrorMessage(payload, `Request failed with status ${response.status}`)
+        toErrorMessage(payload, `Request failed with status ${response.status}`),
+        errorPayload
       );
     }
 
@@ -249,7 +302,7 @@ export function createApiClient(config: ApiConfig) {
       request<UserProfile[]>(`/user/search?tag=${encodeURIComponent(tagQuery)}`, { method: "GET" }),
 
     editMyProfile: (dto: EditProfilePayload) => request<UserProfile>("/user/edit", {
-      method: "POST",
+      method: "PUT",
       body: JSON.stringify(dto)
     }),
 
@@ -339,6 +392,12 @@ export function createApiClient(config: ApiConfig) {
         })
       }),
 
+    forwardMessage: (chatId: number, forwardedFromMessageId: string) =>
+      request<MessageHistoryItem>("/message", {
+        method: "POST",
+        body: JSON.stringify({ chatId, forwardedFromMessageId })
+      }),
+
     uploadMedia: (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
@@ -357,10 +416,10 @@ export function createApiClient(config: ApiConfig) {
         body: JSON.stringify({ userId, messageIds })
       }),
 
-    addReaction: (chatId: number, messageId: string, reactionType: string) =>
+    addReaction: (_chatId: number, messageId: string, reactionType: string) =>
       request<unknown>("/reaction/add", {
         method: "POST",
-        body: JSON.stringify({ chatId, messageId, reactionType })
+        body: JSON.stringify({ messageId, reactionType })
       }),
 
     deleteReaction: (messageId: string, reactionType: string) =>

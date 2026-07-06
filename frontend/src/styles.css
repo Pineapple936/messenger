@@ -1488,6 +1488,7 @@ button:disabled {
 
 .tg-composer-reply { border-left-color: var(--primary); }
 .tg-composer-edit-strip { border-left-color: var(--ok); }
+.tg-composer-forward { border-left-color: var(--pending); }
 
 .tg-composer-strip-icon {
   width: 16px;
@@ -2391,12 +2392,26 @@ button:disabled {
   border-radius: 0;
 }
 
-.tg-forward-preview p {
-  font-size: 0.88rem;
+.tg-forward-preview-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 0.16rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tg-forward-preview-text {
+  font-size: 0.9rem;
   color: var(--text-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tg-forward-search {
+  padding: 0.6rem 0.7rem 0.2rem;
 }
 
 .tg-forward-chat-list {
@@ -2434,6 +2449,50 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tg-forward-empty {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  padding: 0.8rem 0.7rem;
+}
+
+.tg-forwarded-message {
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  margin: 0.08rem 0 0.32rem;
+  padding: 0.34rem 0.5rem 0.34rem 0.52rem;
+  border-left: 2px solid var(--primary);
+  border-radius: 6px;
+  background: var(--bubble-meta-bg);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.tg-forwarded-body {
+  min-width: 0;
+}
+
+.tg-forwarded-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.tg-forwarded-label {
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+
+.tg-forwarded-author {
+  color: var(--primary);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tg-bubble.remote {
@@ -3161,7 +3220,10 @@ button:disabled {
   background: var(--toast-bg);
   color: var(--toast-text);
   padding: 0.7rem 0.84rem;
+  font-size: 0.92rem;
+  line-height: 1.42;
   box-shadow: var(--shadow-soft);
+  white-space: pre-line;
   animation: toast-in 180ms ease;
 }
 
