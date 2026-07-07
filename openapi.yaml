@@ -387,13 +387,16 @@ paths:
       operationId: getChatMessages
       parameters:
         - $ref: '#/components/parameters/ChatIdPath'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/MessageLimit'
+        - $ref: '#/components/parameters/BeforeMessageId'
+        - $ref: '#/components/parameters/AroundMessageId'
       responses:
         '200':
-          description: Message slice
+          description: Chat message window
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -693,6 +696,33 @@ components:
         type: integer
         default: 0
         minimum: 0
+    MessageLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 50
+    BeforeMessageId:
+      name: beforeMessageId
+      in: query
+      required: false
+      description: Load messages older than this message.
+      schema:
+        type: string
+        minLength: 1
+      example: 65f0c2e5a6f8d45000112233
+    AroundMessageId:
+      name: aroundMessageId
+      in: query
+      required: false
+      description: Load a message window around this message, for example a pinned message.
+      schema:
+        type: string
+        minLength: 1
+      example: 65f0c2e5a6f8d45000112234
   responses:
     BadRequest:
       description: Invalid request
@@ -918,6 +948,133 @@ components:
             type: string
             minLength: 1
           example: [65f0c2e5a6f8d45000112233, 65f0c2e5a6f8d45000112234]
+    MessageListResponse:
+      type: object
+      required: [messages, hasBefore, hasAfter]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageResponse'
+        anchorMessageId:
+          type: string
+          nullable: true
+          example: 65f0c2e5a6f8d45000112233
+        hasBefore:
+          type: boolean
+          example: true
+        hasAfter:
+          type: boolean
+          example: false
+    MessageResponse:
+      type: object
+      required: [id, chatId, userId, readStatus, editStatus, sendAt, reactions]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          example: 65f0c2e5a6f8d45000112233
+        chatId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 10
+        userId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 42
+        content:
+          type: string
+          nullable: true
+          example: Hello
+        readStatus:
+          type: boolean
+          example: false
+        editStatus:
+          type: boolean
+          example: false
+        sendAt:
+          type: string
+          format: date-time
+          example: 2026-07-05T10:00:00Z
+        photoLinks:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: [https://cdn.example.com/photo.jpg]
+        reactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReactionOnMessage'
+        repliedMessage:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/RepliedMessageInfo'
+        forwardedMessage:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ForwardedMessageInfo'
+    RepliedMessageInfo:
+      type: object
+      required: [id, userId, content, sendAt]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          example: 65f0c2e5a6f8d45000112230
+        userId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 42
+        content:
+          type: string
+          minLength: 1
+          example: Previous message
+        sendAt:
+          type: string
+          format: date-time
+          example: 2026-07-05T09:59:00Z
+    ForwardedMessageInfo:
+      type: object
+      properties:
+        userId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 42
+        content:
+          type: string
+          nullable: true
+          example: Forwarded text
+        photoLinks:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: [https://cdn.example.com/forwarded-photo.jpg]
+        sendAt:
+          type: string
+          format: date-time
+          example: 2026-07-05T09:58:00Z
+    ReactionOnMessage:
+      type: object
+      required: [reactionType, count, reactedByCurrentUser]
+      properties:
+        reactionType:
+          type: string
+          enum: [LIKE, LOVE, WOW, SAD, ANGRY, LAUGH, THINKING, HANDSHAKE, WHITE_HEART, PURPLE_HEART, YELLOW_HEART, GREEN_HEART, BROKEN_HEART, MIND_BLOWN, PRAY, PARTY, HEART_EYES, CRYING, SCREAM, CLAP, COOL]
+          example: LIKE
+        count:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 3
+        reactedByCurrentUser:
+          type: boolean
+          example: true
     PinMessageDto:
       type: object
       required: [chatId, messageId, messageSendAt, pinnedByUserId]

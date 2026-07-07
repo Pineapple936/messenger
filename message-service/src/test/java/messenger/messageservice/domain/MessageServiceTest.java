@@ -4,6 +4,7 @@ import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListRequest;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListResponse;
+import messenger.messageservice.api.dto.MessageListResponse;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
 import messenger.messageservice.external.ChatHttpClient;
@@ -17,7 +18,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -122,7 +122,7 @@ class MessageServiceTest {
     }
 
     @Test
-    void getSliceLoadsReplyAndForwardReferencesInOneBatch() {
+    void getMessagesLoadsReplyAndForwardReferencesInOneBatch() {
         Message reply = message("reply", 10L, 2L, "reply text", null);
         Message source = message("source", 20L, 3L, "source text", List.of("source-photo"));
         Message item = message("item", 10L, 1L, null, null);
@@ -131,15 +131,15 @@ class MessageServiceTest {
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("chat:10:user:1")).thenReturn(true);
-        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.of(0, 50)))
-                .thenReturn(new SliceImpl<>(List.of(item), PageRequest.of(0, 50), false));
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.ofSize(50)))
+                .thenReturn(slice(item));
         when(messageRepository.findAllById(Set.of(reply.getId(), source.getId()))).thenReturn(List.of(reply, source));
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        Slice<MessageResponse> result = service.getSlice(1L, 10L, 50, 0);
+        MessageListResponse result = service.getMessages(1L, 10L, 50, null, null);
 
-        MessageResponse response = result.getContent().getFirst();
+        MessageResponse response = result.messages().getFirst();
         assertThat(response.content()).isEqualTo(source.getContent());
         assertThat(response.photoLinks()).containsExactly("source-photo");
         assertThat(response.repliedMessage().id()).isEqualTo(reply.getId());
@@ -148,23 +148,104 @@ class MessageServiceTest {
     }
 
     @Test
-    void getSliceHandlesMessagesWithoutReplyOrForwardReferences() {
+    void getMessagesHandlesMessagesWithoutReplyOrForwardReferences() {
         Message item = message("item", 10L, 1L, "plain text", null);
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("chat:10:user:1")).thenReturn(true);
-        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.of(0, 50)))
-                .thenReturn(new SliceImpl<>(List.of(item), PageRequest.of(0, 50), false));
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.ofSize(50)))
+                .thenReturn(slice(item));
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        Slice<MessageResponse> result = service.getSlice(1L, 10L, 50, 0);
+        MessageListResponse result = service.getMessages(1L, 10L, 50, null, null);
 
-        MessageResponse response = result.getContent().getFirst();
+        MessageResponse response = result.messages().getFirst();
         assertThat(response.content()).isEqualTo("plain text");
         assertThat(response.repliedMessage()).isNull();
         assertThat(response.forwardedMessage()).isNull();
         verify(messageRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void getMessagesOnChatOpenLoadsAroundFirstUnreadMessage() {
+        Message newer = message("m5", 10L, 3L, "newer", null);
+        newer.setSendAt(NOW.plusSeconds(60));
+        Message firstUnread = message("m3", 10L, 2L, "first unread", null);
+        Message older = message("m1", 10L, 2L, "older", null);
+        older.setSendAt(NOW.minusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findFirstByChatIdAndUserIdNotAndReadStatusFalseOrderBySendAtAscIdAsc(10L, 1L))
+                .thenReturn(Optional.of(firstUnread));
+        when(messageRepository.findAfter(eq(10L), eq(firstUnread.getSendAt()), eq(firstUnread.getId()), any()))
+                .thenReturn(slice(newer));
+        when(messageRepository.findBefore(eq(10L), eq(firstUnread.getSendAt()), eq(firstUnread.getId()), any()))
+                .thenReturn(slice(older));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, 3, null, null);
+
+        assertThat(result.messages()).extracting(MessageResponse::id)
+                .containsExactly(newer.getId(), firstUnread.getId(), older.getId());
+        verify(messageRepository, never()).findByChatIdOrderBySendAtDescIdDesc(eq(10L), any());
+    }
+
+    @Test
+    void getMessagesBeforeAnchorLoadsOlderMessages() {
+        Message anchor = message("m3", 10L, 1L, "anchor", null);
+        Message sameTimeOlder = message("m2", 10L, 2L, "same time older", null);
+        Message older = message("m1", 10L, 3L, "older", null);
+        older.setSendAt(NOW.minusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findById(anchor.getId())).thenReturn(Optional.of(anchor));
+        when(messageRepository.findBefore(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(sameTimeOlder, older));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, 2, anchor.getId(), null);
+
+        assertThat(result.messages()).extracting(MessageResponse::id)
+                .containsExactly(sameTimeOlder.getId(), older.getId());
+    }
+
+    @Test
+    void getMessagesAroundAnchorLoadsNewerAnchorAndOlderMessages() {
+        Message newer = message("m5", 10L, 1L, "newer", null);
+        newer.setSendAt(NOW.plusSeconds(60));
+        Message anchor = message("m3", 10L, 1L, "anchor", null);
+        Message older = message("m1", 10L, 1L, "older", null);
+        older.setSendAt(NOW.minusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findById(anchor.getId())).thenReturn(Optional.of(anchor));
+        when(messageRepository.findAfter(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(newer));
+        when(messageRepository.findBefore(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(older));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, 3, null, anchor.getId());
+
+        assertThat(result.messages()).extracting(MessageResponse::id)
+                .containsExactly(newer.getId(), anchor.getId(), older.getId());
+    }
+
+    @Test
+    void getMessagesRejectsMixedCursorModes() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.getMessages(1L, 10L, 10, "before", "around"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Use beforeMessageId or aroundMessageId, not both");
     }
 
     @Test
@@ -311,5 +392,9 @@ class MessageServiceTest {
         message.setEditStatus(false);
         message.setSendAt(NOW);
         return message;
+    }
+
+    private static SliceImpl<Message> slice(Message... messages) {
+        return new SliceImpl<>(List.of(messages));
     }
 }

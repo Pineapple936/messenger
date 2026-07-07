@@ -9,11 +9,11 @@ import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.PinMessageDto;
 import messenger.messageservice.api.dto.CreateMessage;
 import messenger.messageservice.api.dto.MessageEditDto;
+import messenger.messageservice.api.dto.MessageListResponse;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.mapper.MessageMapper;
 import messenger.messageservice.domain.MessageService;
-import org.springframework.data.domain.Slice;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -35,18 +35,7 @@ public class MessageController {
     @PostMapping
     public ResponseEntity<MessageResponse> addMessage(@RequestHeader(USER_ID_HEADER) Long userId,
                                                       @RequestBody @Valid CreateMessage request) {
-        MessageDto dto = MessageDto
-                .builder()
-                .chatId(request.chatId())
-                .userId(userId)
-                .content(request.content())
-                .photoLinks(request.photoLinks())
-                .readStatus(false)
-                .editStatus(false)
-                .sendAt(Instant.now())
-                .repliedMessageId(request.repliedMessageId())
-                .forwardedFromMessageId(request.forwardedFromMessageId())
-                .build();
+        MessageDto dto = messageMapper.toDto(userId, request, Instant.now());
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(messageService.saveAndPublish(dto));
     }
 
@@ -58,11 +47,15 @@ public class MessageController {
     }
 
     @GetMapping("/chat/{chatId}")
-    public ResponseEntity<Slice<MessageResponse>> paginationMessages(@RequestHeader(USER_ID_HEADER) Long userId,
-                                                             @PathVariable @Positive Long chatId,
-                                                             @RequestParam(defaultValue = "50") Integer limit,
-                                                             @RequestParam(defaultValue = "0") Integer offset) {
-        return ResponseEntity.ok(messageService.getSlice(userId, chatId, limit, offset));
+    public ResponseEntity<MessageListResponse> getMessages(
+            @RequestHeader(USER_ID_HEADER) Long userId,
+            @PathVariable @Positive Long chatId,
+            @RequestParam(defaultValue = "50") @Positive int limit,
+            @RequestParam(required = false) @NotBlank String beforeMessageId,
+            @RequestParam(required = false) @NotBlank String aroundMessageId
+    ) {
+        if(limit > 50) limit = 50;
+        return ResponseEntity.ok(messageService.getMessages(userId, chatId, limit, beforeMessageId, aroundMessageId));
     }
 
     @GetMapping("/{messageId}/exists/{userId}")
@@ -81,12 +74,8 @@ public class MessageController {
     public ResponseEntity<List<PinMessageDto>> getPinnedMessages(@RequestHeader(USER_ID_HEADER) Long userId,
                                                                  @PathVariable Long chatId) {
         return ResponseEntity.ok(messageService.getPinnedMessageByChatId(userId, chatId).stream()
-                .map(pinnedMessage -> new PinMessageDto(
-                        pinnedMessage.getChatId(),
-                        pinnedMessage.getMessageId(),
-                        pinnedMessage.getMessageSendAt(),
-                        pinnedMessage.getPinnedByUserId()
-                )).toList());
+                .map(messageMapper::toPinDto)
+                .toList());
     }
 
     @PutMapping("/edit")
