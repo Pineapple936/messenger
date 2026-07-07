@@ -33,6 +33,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,6 +45,9 @@ class MessageServiceTest {
 
     @Mock
     private MessageRepository messageRepository;
+
+    @Mock
+    private PinnedMessageRepository pinnedMessageRepository;
 
     @Mock
     private ChatHttpClient chatHttpClient;
@@ -69,6 +73,7 @@ class MessageServiceTest {
     void setUp() {
         service = new MessageService(
                 messageRepository,
+                pinnedMessageRepository,
                 chatHttpClient,
                 reactionHttpClient,
                 mediaHttpClient,
@@ -191,12 +196,69 @@ class MessageServiceTest {
     }
 
     @Test
+    void pinMessageSavesPinAndPublishesGatewayEvent() {
+        Message message = message("message-1", 10L, 2L, "text", null);
+
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        service.pinMessageById(1L, "message-1");
+
+        verify(pinnedMessageRepository).save(any(PinnedMessage.class));
+        verify(messageKafkaProducer).sendPinEvent(argThat(event ->
+                event.chatId().equals(10L)
+                        && event.messageId().equals("message-1")
+                        && event.messageSendAt().equals(message.getSendAt())
+                        && event.pinnedByUserId().equals(1L)
+        ));
+    }
+
+    @Test
+    void pinMessageRejectsAlreadyPinnedMessage() {
+        Message message = message("message-1", 10L, 2L, "text", null);
+
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(pinnedMessageRepository.existsByMessageId("message-1")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.pinMessageById(1L, "message-1"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409 CONFLICT")
+                .hasMessageContaining("Message is already pinned");
+
+        verify(pinnedMessageRepository, never()).save(any(PinnedMessage.class));
+        verify(messageKafkaProducer, never()).sendPinEvent(any());
+    }
+
+    @Test
+    void unpinMessageDeletesPinAndPublishesGatewayEvent() {
+        Message pinnedSource = message("message-1", 10L, 2L, "text", null);
+        PinnedMessage pinnedMessage = new PinnedMessage(pinnedSource, 2L);
+
+        when(pinnedMessageRepository.findByMessageId("message-1")).thenReturn(Optional.of(pinnedMessage));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+
+        service.unpinnedMessageById(1L, "message-1");
+
+        verify(pinnedMessageRepository).delete(pinnedMessage);
+        verify(messageKafkaProducer).sendUnpinEvent(argThat(event ->
+                event.chatId().equals(10L)
+                        && event.messageId().equals("message-1")
+                        && event.messageSendAt().equals(pinnedSource.getSendAt())
+                        && event.pinnedByUserId().equals(1L)
+        ));
+    }
+
+    @Test
     void deleteByIdDeletesOnlyMediaLinksThatAreNoLongerReferenced() {
         Message deleted = message("deleted", 10L, 1L, "with media", List.of("keep", "remove"));
         Message remaining = message("remaining", 10L, 2L, "still uses media", List.of("keep"));
 
         when(messageRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
         when(messageRepository.findByPhotoLinksIn(List.of("keep", "remove"))).thenReturn(List.of(remaining));
+        when(pinnedMessageRepository.findByMessageId(deleted.getId())).thenReturn(Optional.empty());
 
         service.deleteById(1L, deleted.getId());
 
@@ -210,12 +272,32 @@ class MessageServiceTest {
         forwarded.setForwardedMessageId("source");
 
         when(messageRepository.findById(forwarded.getId())).thenReturn(Optional.of(forwarded));
+        when(pinnedMessageRepository.findByMessageId(forwarded.getId())).thenReturn(Optional.empty());
 
         service.deleteById(1L, forwarded.getId());
 
         verify(messageRepository).deleteById(forwarded.getId());
         verify(messageRepository, never()).findByPhotoLinksIn(any());
         verify(mediaHttpClient, never()).deleteByListName(any());
+    }
+
+    @Test
+    void deleteByIdUnpinsDeletedMessage() {
+        Message deleted = message("deleted", 10L, 1L, "text", null);
+        PinnedMessage pinnedMessage = new PinnedMessage(deleted, 1L);
+
+        when(messageRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
+        when(pinnedMessageRepository.findByMessageId(deleted.getId())).thenReturn(Optional.of(pinnedMessage));
+
+        service.deleteById(1L, deleted.getId());
+
+        verify(pinnedMessageRepository).delete(pinnedMessage);
+        verify(messageKafkaProducer).sendUnpinEvent(argThat(event ->
+                event.chatId().equals(10L)
+                        && event.messageId().equals("deleted")
+                        && event.messageSendAt().equals(deleted.getSendAt())
+                        && event.pinnedByUserId().equals(1L)
+        ));
     }
 
     private static Message message(String id, Long chatId, Long userId, String content, List<String> photoLinks) {

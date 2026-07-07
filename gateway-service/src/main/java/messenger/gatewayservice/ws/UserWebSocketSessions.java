@@ -8,6 +8,7 @@ import messenger.commonlibs.dto.messageservice.ForwardedMessageDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
 import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
 import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
+import messenger.commonlibs.dto.messageservice.PinMessageDto;
 import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -152,6 +153,25 @@ public class UserWebSocketSessions {
                 messageEditEventDto.chatId(),
                 messageEditEventDto.content(),
                 messageEditEventDto.editStatus()
+        ));
+
+        for (Sinks.Many<String> sink : userSinks) {
+            emitToSink(sink, payload);
+        }
+    }
+
+    public void pushMessagePinToUser(Long userId, PinMessageDto pinMessageDto, boolean pinned) {
+        Set<Sinks.Many<String>> userSinks = sessions.get(userId);
+        if (userSinks == null || userSinks.isEmpty()) {
+            return;
+        }
+
+        String payload = toJsonSafe(new OutgoingMessagePinEvent(
+                pinned ? "message_pin" : "message_unpin",
+                pinMessageDto.chatId(),
+                pinMessageDto.messageId(),
+                pinMessageDto.messageSendAt() != null ? pinMessageDto.messageSendAt().toString() : null,
+                pinMessageDto.pinnedByUserId()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -359,6 +379,15 @@ public class UserWebSocketSessions {
             Long chatId,
             String content,
             Boolean editStatus
+    ) {
+    }
+
+    private record OutgoingMessagePinEvent(
+            String type,
+            Long chatId,
+            String messageId,
+            String messageSendAt,
+            Long pinnedByUserId
     ) {
     }
 

@@ -28,6 +28,22 @@ public class MessageKafkaProducer {
         gatewayMessageEventKafkaTemplate.send(gatewayMessageEventsTopic, key, GatewayMessageEventDto.messageCreated(messageDto));
     }
 
+    public void sendPinEvent(PinMessageDto pinMessageDto) {
+        gatewayMessageEventKafkaTemplate.send(
+                gatewayMessageEventsTopic,
+                String.valueOf(pinMessageDto.chatId()),
+                GatewayMessageEventDto.messagePinned(pinMessageDto)
+        );
+    }
+
+    public void sendUnpinEvent(PinMessageDto pinMessageDto) {
+        gatewayMessageEventKafkaTemplate.send(
+                gatewayMessageEventsTopic,
+                String.valueOf(pinMessageDto.chatId()),
+                GatewayMessageEventDto.messageUnpinned(pinMessageDto)
+        );
+    }
+
     public void sendReadEvent(MessageReadEventDto messageReadEventDto) {
         gatewayMessageEventKafkaTemplate.send(
                 gatewayMessageEventsTopic,

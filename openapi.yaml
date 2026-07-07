@@ -398,6 +398,40 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+  /message/chat/{chatId}/pins:
+    get:
+      tags: [Message]
+      summary: Get pinned messages
+      operationId: getPinnedMessages
+      parameters:
+        - $ref: '#/components/parameters/ChatIdPath'
+      responses:
+        '200':
+          description: Pinned messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PinMessageDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /message/pin/{messageId}:
+    post:
+      tags: [Message]
+      summary: Pin message
+      operationId: pinMessage
+      parameters:
+        - $ref: '#/components/parameters/MessageIdPath'
+      responses:
+        '201':
+          description: Message pinned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /message/edit:
     put:
       tags: [Message]
@@ -446,6 +480,20 @@ paths:
       responses:
         '200':
           description: Messages marked as read
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /message/unpin/{messageId}:
+    delete:
+      tags: [Message]
+      summary: Unpin message
+      operationId: unpinMessage
+      parameters:
+        - $ref: '#/components/parameters/MessageIdPath'
+      responses:
+        '204':
+          description: Message unpinned
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -870,6 +918,28 @@ components:
             type: string
             minLength: 1
           example: [65f0c2e5a6f8d45000112233, 65f0c2e5a6f8d45000112234]
+    PinMessageDto:
+      type: object
+      required: [chatId, messageId, messageSendAt, pinnedByUserId]
+      properties:
+        chatId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 10
+        messageId:
+          type: string
+          minLength: 1
+          example: 65f0c2e5a6f8d45000112233
+        messageSendAt:
+          type: string
+          format: date-time
+          example: 2026-07-05T10:00:00Z
+        pinnedByUserId:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 42
     CreateReactionDto:
       type: object
       required: [messageId, reactionType]

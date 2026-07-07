@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MessageService {
     private final MessageRepository messageRepository;
+    private final PinnedMessageRepository pinnedMessageRepository;
     private final ChatHttpClient chatHttpClient;
     private final ReactionHttpClient reactionHttpClient;
     private final MediaHttpClient mediaHttpClient;
@@ -106,6 +107,55 @@ public class MessageService {
 
     public Boolean isMessageOwner(Long userId, String messageId) {
         return messageRepository.existsByUserIdAndId(userId, messageId);
+    }
+
+    @Transactional
+    public void pinMessageById(Long pinnedUserId, String messageId) {
+        Message message = findById(messageId);
+
+        if(!isChatMember(pinnedUserId, message.getChatId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+        }
+
+        if(pinnedMessageRepository.existsByMessageId(message.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Message is already pinned");
+        }
+
+        pinnedMessageRepository.save(new PinnedMessage(message, pinnedUserId));
+        messageKafkaProducer.sendPinEvent(new PinMessageDto(
+                message.getChatId(),
+                message.getId(),
+                message.getSendAt(),
+                pinnedUserId
+        ));
+    }
+
+    @Transactional
+    public void unpinnedMessageById(Long unpinnedUserId, String messageId) {
+        PinnedMessage pinnedMessage = pinnedMessageRepository.findByMessageId(messageId).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Pinned message not found with id: " + messageId)
+        );
+
+        if(!isChatMember(unpinnedUserId, pinnedMessage.getChatId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+        }
+
+        pinnedMessageRepository.delete(pinnedMessage);
+        messageKafkaProducer.sendUnpinEvent(new PinMessageDto(
+                pinnedMessage.getChatId(),
+                pinnedMessage.getMessageId(),
+                pinnedMessage.getMessageSendAt(),
+                unpinnedUserId
+        ));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PinnedMessage> getPinnedMessageByChatId(Long userId, Long chatId) {
+        if (!isChatMember(userId, chatId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+        }
+
+        return pinnedMessageRepository.findAllByChatIdOrderByMessageSendAtAsc(chatId);
     }
 
     @Transactional(readOnly = true)
@@ -212,6 +262,7 @@ public class MessageService {
 
         List<String> photoLinks = photoLinks(message);
         messageRepository.deleteById(messageId);
+        unpinDeletedMessage(userId, message);
         deleteMediaIfUnreferenced(photoLinks);
         messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
                 message.getId(),
@@ -296,5 +347,17 @@ public class MessageService {
             return;
         }
         mediaHttpClient.deleteByListName(unreferencedPhotoLinks);
+    }
+
+    private void unpinDeletedMessage(Long userId, Message message) {
+        pinnedMessageRepository.findByMessageId(message.getId()).ifPresent(pinnedMessage -> {
+            pinnedMessageRepository.delete(pinnedMessage);
+            messageKafkaProducer.sendUnpinEvent(new PinMessageDto(
+                    message.getChatId(),
+                    message.getId(),
+                    message.getSendAt(),
+                    userId
+            ));
+        });
     }
 }

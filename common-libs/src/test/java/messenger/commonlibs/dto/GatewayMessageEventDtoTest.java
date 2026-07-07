@@ -3,6 +3,7 @@ package messenger.commonlibs.dto;
 import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
 import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
 import messenger.commonlibs.dto.messageservice.MessageDto;
+import messenger.commonlibs.dto.messageservice.PinMessageDto;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -28,6 +29,7 @@ class GatewayMessageEventDtoTest {
         assertThat(event.chatId()).isEqualTo(10L);
         assertThat(event.message()).isSameAs(message);
         assertThat(event.messageDeleteEvent()).isNull();
+        assertThat(event.pinMessageEvent()).isNull();
     }
 
     @Test
@@ -40,5 +42,17 @@ class GatewayMessageEventDtoTest {
         assertThat(event.chatId()).isEqualTo(10L);
         assertThat(event.message()).isNull();
         assertThat(event.messageDeleteEvent()).isSameAs(deleteEvent);
+    }
+
+    @Test
+    void messagePinnedFactorySetsPinPayloadOnly() {
+        PinMessageDto pinEvent = new PinMessageDto(10L, "message-1", Instant.parse("2026-07-05T10:00:00Z"), 2L);
+
+        GatewayMessageEventDto event = GatewayMessageEventDto.messagePinned(pinEvent);
+
+        assertThat(event.type()).isEqualTo(GatewayMessageEventDto.EventType.MESSAGE_PINNED);
+        assertThat(event.chatId()).isEqualTo(10L);
+        assertThat(event.message()).isNull();
+        assertThat(event.pinMessageEvent()).isSameAs(pinEvent);
     }
 }
