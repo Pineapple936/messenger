@@ -387,9 +387,9 @@ paths:
       operationId: getChatMessages
       parameters:
         - $ref: '#/components/parameters/ChatIdPath'
-        - $ref: '#/components/parameters/MessageLimit'
-        - $ref: '#/components/parameters/BeforeMessageId'
-        - $ref: '#/components/parameters/AroundMessageId'
+        - $ref: '#/components/parameters/MessageIdQuery'
+        - $ref: '#/components/parameters/BeforeLimit'
+        - $ref: '#/components/parameters/AfterLimit'
       responses:
         '200':
           description: Chat message window
@@ -696,33 +696,35 @@ components:
         type: integer
         default: 0
         minimum: 0
-    MessageLimit:
-      name: limit
+    MessageIdQuery:
+      name: messageId
       in: query
       required: false
-      schema:
-        type: integer
-        default: 50
-        minimum: 1
-        maximum: 50
-    BeforeMessageId:
-      name: beforeMessageId
-      in: query
-      required: false
-      description: Load messages older than this message.
+      description: Anchor message id. Without this parameter the API returns the latest 50 messages from the end of the chat.
       schema:
         type: string
         minLength: 1
       example: 65f0c2e5a6f8d45000112233
-    AroundMessageId:
-      name: aroundMessageId
+    BeforeLimit:
+      name: beforeLimit
       in: query
       required: false
-      description: Load a message window around this message, for example a pinned message.
+      description: Number of older messages to load before messageId.
       schema:
-        type: string
-        minLength: 1
-      example: 65f0c2e5a6f8d45000112234
+        type: integer
+        minimum: 0
+        maximum: 50
+      example: 15
+    AfterLimit:
+      name: afterLimit
+      in: query
+      required: false
+      description: Number of newer messages to load after messageId.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 50
+      example: 14
   responses:
     BadRequest:
       description: Invalid request

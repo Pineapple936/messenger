@@ -50,12 +50,11 @@ public class MessageController {
     public ResponseEntity<MessageListResponse> getMessages(
             @RequestHeader(USER_ID_HEADER) Long userId,
             @PathVariable @Positive Long chatId,
-            @RequestParam(defaultValue = "50") @Positive int limit,
-            @RequestParam(required = false) @NotBlank String beforeMessageId,
-            @RequestParam(required = false) @NotBlank String aroundMessageId
+            @RequestParam(required = false) String messageId,
+            @RequestParam(required = false) Integer beforeLimit,
+            @RequestParam(required = false) Integer afterLimit
     ) {
-        if(limit > 50) limit = 50;
-        return ResponseEntity.ok(messageService.getMessages(userId, chatId, limit, beforeMessageId, aroundMessageId));
+        return ResponseEntity.ok(messageService.getMessages(userId, chatId, messageId, beforeLimit, afterLimit));
     }
 
     @GetMapping("/{messageId}/exists/{userId}")

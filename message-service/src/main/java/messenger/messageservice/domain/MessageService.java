@@ -15,7 +15,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
-import org.springframework.data.domain.Sort;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -33,6 +32,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class MessageService {
+    private static final int DEFAULT_MESSAGES_LIMIT = 50;
+
     private final MessageRepository messageRepository;
     private final PinnedMessageRepository pinnedMessageRepository;
     private final ChatHttpClient chatHttpClient;
@@ -77,14 +78,14 @@ public class MessageService {
     public MessageListResponse getMessages(
             Long userId,
             Long chatId,
-            int limit,
-            String beforeMessageId,
-            String aroundMessageId
+            String messageId,
+            Integer beforeLimit,
+            Integer afterLimit
     ) {
         requireChatMember(userId, chatId);
 
-        if (beforeMessageId != null && aroundMessageId != null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use beforeMessageId or aroundMessageId, not both");
+        if (messageId == null && (beforeLimit != null || afterLimit != null)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "messageId is required when beforeLimit or afterLimit is used");
         }
 
         List<Message> messages;
@@ -92,41 +93,35 @@ public class MessageService {
         boolean hasBefore;
         boolean hasAfter;
 
-        if (aroundMessageId != null) {
-            Message anchorMessage = findMessageInChat(chatId, aroundMessageId);
+        if (messageId != null) {
+            int normalizedBeforeLimit = normalizeCursorLimit(beforeLimit);
+            int normalizedAfterLimit = normalizeCursorLimit(afterLimit);
+            Message anchorMessage = findMessageInChat(chatId, messageId);
             anchorMessageId = anchorMessage.getId();
-            Slice<Message> newer = findAfter(chatId, anchorMessage, limit - limit / 2 - 1);
-            Slice<Message> older = findBefore(chatId, anchorMessage, limit / 2);
-            messages = aroundMessages(anchorMessage, newer.getContent(), older.getContent());
-            hasBefore = older.hasNext();
-            hasAfter = newer.hasNext();
-        } else if (beforeMessageId != null) {
-            Message anchorMessage = findMessageInChat(chatId, beforeMessageId);
-            anchorMessageId = anchorMessage.getId();
-            Slice<Message> before = findBefore(chatId, anchorMessage, limit);
-            messages = before.getContent();
-            hasBefore = before.hasNext();
-            hasAfter = true;
-        } else {
-            Message unreadMessage = firstUnreadMessage(userId, chatId);
-            if (unreadMessage == null) {
-                Slice<Message> latest = messageRepository.findByChatIdOrderBySendAtDescIdDesc(
-                        chatId,
-                        PageRequest.ofSize(limit)
-                );
-                messages = latest.getContent();
-                hasBefore = latest.hasNext();
-                hasAfter = false;
+
+            Slice<Message> newer = findAfter(chatId, anchorMessage, normalizedAfterLimit);
+            Slice<Message> older = findBefore(chatId, anchorMessage, normalizedBeforeLimit);
+
+            if (beforeLimit != null && afterLimit != null) {
+                messages = aroundMessages(anchorMessage, newer.getContent(), older.getContent());
+            } else if (afterLimit != null) {
+                messages = newer.getContent();
+            } else if (beforeLimit != null) {
+                messages = older.getContent();
             } else {
-                anchorMessageId = unreadMessage.getId();
-                int olderLimit = limit / 2;
-                int newerLimit = limit - olderLimit - 1;
-                Slice<Message> newer = findAfter(chatId, unreadMessage, newerLimit);
-                Slice<Message> older = findBefore(chatId, unreadMessage, olderLimit);
-                messages = aroundMessages(unreadMessage, newer.getContent(), older.getContent());
-                hasBefore = older.hasNext();
-                hasAfter = newer.hasNext();
+                messages = List.of(anchorMessage);
             }
+
+            hasBefore = beforeLimit != null ? older.hasNext() : normalizedBeforeLimit == 0;
+            hasAfter = afterLimit != null ? newer.hasNext() : normalizedAfterLimit == 0;
+        } else {
+            Slice<Message> latest = messageRepository.findByChatIdOrderBySendAtDescIdDesc(
+                    chatId,
+                    PageRequest.ofSize(DEFAULT_MESSAGES_LIMIT)
+            );
+            messages = latest.getContent();
+            hasBefore = latest.hasNext();
+            hasAfter = false;
         }
 
         if (messages.isEmpty()) {
@@ -306,11 +301,6 @@ public class MessageService {
         return message;
     }
 
-    private Message firstUnreadMessage(Long userId, Long chatId) {
-        return messageRepository.findFirstByChatIdAndUserIdNotAndReadStatusFalseOrderBySendAtAscIdAsc(chatId, userId)
-                .orElse(null);
-    }
-
     private Slice<Message> findBefore(Long chatId, Message anchor, int limit) {
         if (limit == 0) {
             return new SliceImpl<>(List.of());
@@ -320,7 +310,7 @@ public class MessageService {
                 chatId,
                 anchor.getSendAt(),
                 anchor.getId(),
-                messagePage(limit)
+                PageRequest.ofSize(limit)
         );
     }
 
@@ -333,7 +323,7 @@ public class MessageService {
                 chatId,
                 anchor.getSendAt(),
                 anchor.getId(),
-                messagePage(limit)
+                PageRequest.ofSize(limit)
         );
     }
 
@@ -345,8 +335,16 @@ public class MessageService {
         return messages;
     }
 
-    private PageRequest messagePage(int limit) {
-        return PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "sendAt", "id"));
+    private int normalizeCursorLimit(Integer limit) {
+        if (limit == null) {
+            return 0;
+        }
+
+        if (limit < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cursor limits must be greater than or equal to 0");
+        }
+
+        return Math.min(limit, DEFAULT_MESSAGES_LIMIT);
     }
 
     private boolean isChatMember(Long userId, Long chatId) {

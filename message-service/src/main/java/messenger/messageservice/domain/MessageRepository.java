@@ -14,10 +14,12 @@ public interface MessageRepository extends MongoRepository<Message, String> {
 
     Optional<Message> findFirstByChatIdAndUserIdNotAndReadStatusFalseOrderBySendAtAscIdAsc(Long chatId, Long userId);
 
-    @Query("{ 'chat_id': ?0, $or: [ { 'send_at': { $lt: ?1 } }, { 'send_at': ?1, '_id': { $lt: ?2 } } ] }")
+    @Query(value = "{ 'chat_id': ?0, $or: [ { 'send_at': { $lt: ?1 } }, { 'send_at': ?1, '_id': { $lt: ?2 } } ] }",
+            sort = "{ 'send_at': -1, '_id': -1 }")
     Slice<Message> findBefore(Long chatId, Instant sendAt, String id, Pageable limit);
 
-    @Query("{ 'chat_id': ?0, $or: [ { 'send_at': { $gt: ?1 } }, { 'send_at': ?1, '_id': { $gt: ?2 } } ] }")
+    @Query(value = "{ 'chat_id': ?0, $or: [ { 'send_at': { $gt: ?1 } }, { 'send_at': ?1, '_id': { $gt: ?2 } } ] }",
+            sort = "{ 'send_at': 1, '_id': 1 }")
     Slice<Message> findAfter(Long chatId, Instant sendAt, String id, Pageable limit);
 
     void deleteByChatId(Long chatId);

@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -137,7 +138,7 @@ class MessageServiceTest {
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        MessageListResponse result = service.getMessages(1L, 10L, 50, null, null);
+        MessageListResponse result = service.getMessages(1L, 10L, null, null, null);
 
         MessageResponse response = result.messages().getFirst();
         assertThat(response.content()).isEqualTo(source.getContent());
@@ -158,7 +159,7 @@ class MessageServiceTest {
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        MessageListResponse result = service.getMessages(1L, 10L, 50, null, null);
+        MessageListResponse result = service.getMessages(1L, 10L, null, null, null);
 
         MessageResponse response = result.messages().getFirst();
         assertThat(response.content()).isEqualTo("plain text");
@@ -168,29 +169,20 @@ class MessageServiceTest {
     }
 
     @Test
-    void getMessagesOnChatOpenLoadsAroundFirstUnreadMessage() {
-        Message newer = message("m5", 10L, 3L, "newer", null);
-        newer.setSendAt(NOW.plusSeconds(60));
-        Message firstUnread = message("m3", 10L, 2L, "first unread", null);
-        Message older = message("m1", 10L, 2L, "older", null);
-        older.setSendAt(NOW.minusSeconds(60));
+    void getMessagesWithoutCursorLoadsLatestMessages() {
+        Message latest = message("m5", 10L, 3L, "latest", null);
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("chat:10:user:1")).thenReturn(true);
-        when(messageRepository.findFirstByChatIdAndUserIdNotAndReadStatusFalseOrderBySendAtAscIdAsc(10L, 1L))
-                .thenReturn(Optional.of(firstUnread));
-        when(messageRepository.findAfter(eq(10L), eq(firstUnread.getSendAt()), eq(firstUnread.getId()), any()))
-                .thenReturn(slice(newer));
-        when(messageRepository.findBefore(eq(10L), eq(firstUnread.getSendAt()), eq(firstUnread.getId()), any()))
-                .thenReturn(slice(older));
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.ofSize(50)))
+                .thenReturn(slice(latest));
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        MessageListResponse result = service.getMessages(1L, 10L, 3, null, null);
+        MessageListResponse result = service.getMessages(1L, 10L, null, null, null);
 
-        assertThat(result.messages()).extracting(MessageResponse::id)
-                .containsExactly(newer.getId(), firstUnread.getId(), older.getId());
-        verify(messageRepository, never()).findByChatIdOrderBySendAtDescIdDesc(eq(10L), any());
+        assertThat(result.messages()).extracting(MessageResponse::id).containsExactly(latest.getId());
+        assertThat(result.anchorMessageId()).isNull();
     }
 
     @Test
@@ -208,14 +200,40 @@ class MessageServiceTest {
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        MessageListResponse result = service.getMessages(1L, 10L, 2, anchor.getId(), null);
+        MessageListResponse result = service.getMessages(1L, 10L, anchor.getId(), 2, null);
 
         assertThat(result.messages()).extracting(MessageResponse::id)
                 .containsExactly(sameTimeOlder.getId(), older.getId());
     }
 
     @Test
-    void getMessagesAroundAnchorLoadsNewerAnchorAndOlderMessages() {
+    void getMessagesAfterAnchorLoadsNewerMessages() {
+        Message anchor = message("m1", 10L, 1L, "anchor", null);
+        Message newer = message("m2", 10L, 2L, "newer", null);
+        newer.setSendAt(NOW.plusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findById(anchor.getId())).thenReturn(Optional.of(anchor));
+        when(messageRepository.findAfter(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(newer));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, anchor.getId(), null, 2);
+
+        assertThat(result.messages()).extracting(MessageResponse::id).containsExactly(newer.getId());
+        assertThat(result.anchorMessageId()).isEqualTo(anchor.getId());
+        assertThat(result.hasBefore()).isTrue();
+        assertThat(result.hasAfter()).isFalse();
+
+        ArgumentCaptor<Pageable> pageCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(messageRepository).findAfter(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), pageCaptor.capture());
+        assertThat(pageCaptor.getValue().getPageSize()).isEqualTo(2);
+    }
+
+    @Test
+    void getMessagesWithBeforeAndAfterLimitsLoadsNewerAnchorAndOlderMessages() {
         Message newer = message("m5", 10L, 1L, "newer", null);
         newer.setSendAt(NOW.plusSeconds(60));
         Message anchor = message("m3", 10L, 1L, "anchor", null);
@@ -232,20 +250,20 @@ class MessageServiceTest {
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        MessageListResponse result = service.getMessages(1L, 10L, 3, null, anchor.getId());
+        MessageListResponse result = service.getMessages(1L, 10L, anchor.getId(), 1, 1);
 
         assertThat(result.messages()).extracting(MessageResponse::id)
                 .containsExactly(newer.getId(), anchor.getId(), older.getId());
     }
 
     @Test
-    void getMessagesRejectsMixedCursorModes() {
+    void getMessagesRejectsCursorLimitsWithoutMessageId() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("chat:10:user:1")).thenReturn(true);
 
-        assertThatThrownBy(() -> service.getMessages(1L, 10L, 10, "before", "around"))
+        assertThatThrownBy(() -> service.getMessages(1L, 10L, null, 10, null))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("Use beforeMessageId or aroundMessageId, not both");
+                .hasMessageContaining("messageId is required");
     }
 
     @Test
