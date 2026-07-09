@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.PinMessageDto;
+import messenger.commonlibs.dto.messageservice.PinMessageInfoDto;
 import messenger.messageservice.api.dto.CreateMessage;
 import messenger.messageservice.api.dto.MessageEditDto;
 import messenger.messageservice.api.dto.MessageListResponse;
@@ -70,11 +70,9 @@ public class MessageController {
     }
 
     @GetMapping("/chat/{chatId}/pins")
-    public ResponseEntity<List<PinMessageDto>> getPinnedMessages(@RequestHeader(USER_ID_HEADER) Long userId,
-                                                                 @PathVariable Long chatId) {
-        return ResponseEntity.ok(messageService.getPinnedMessageByChatId(userId, chatId).stream()
-                .map(messageMapper::toPinDto)
-                .toList());
+    public ResponseEntity<List<PinMessageInfoDto>> getPinnedMessages(@RequestHeader(USER_ID_HEADER) Long userId,
+                                                                     @PathVariable Long chatId) {
+        return ResponseEntity.ok(messageService.getPinnedMessageByChatId(userId, chatId));
     }
 
     @PutMapping("/edit")

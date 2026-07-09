@@ -1,9 +1,6 @@
 package messenger.gatewayservice.kafka;
 
-import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.PinMessageDto;
+import messenger.commonlibs.dto.messageservice.*;
 import messenger.gatewayservice.ws.ChatParticipantsClient;
 import messenger.gatewayservice.ws.UserWebSocketSessions;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,25 +65,25 @@ class GatewayMessageEventHandlerTest {
 
     @Test
     void messagePinnedIsDeliveredToAllParticipants() {
-        PinMessageDto event = new PinMessageDto(10L, "message-1", java.time.Instant.parse("2026-07-05T10:00:00Z"), 2L);
+        PinMessageInfoDto event = new PinMessageInfoDto(10L, "message-1", "text", java.time.Instant.parse("2026-07-05T10:00:00Z"), 2L);
         when(chatParticipantsClient.getChatUsers(10L)).thenReturn(List.of(1L, 2L, 3L));
 
         handler.handle(GatewayMessageEventDto.messagePinned(event));
 
-        verify(userWebSocketSessions).pushMessagePinToUser(1L, event, true);
-        verify(userWebSocketSessions).pushMessagePinToUser(2L, event, true);
-        verify(userWebSocketSessions).pushMessagePinToUser(3L, event, true);
+        verify(userWebSocketSessions).pushMessagePinToUser(1L, event);
+        verify(userWebSocketSessions).pushMessagePinToUser(2L, event);
+        verify(userWebSocketSessions).pushMessagePinToUser(3L, event);
     }
 
     @Test
     void messageUnpinnedIsDeliveredToAllParticipants() {
-        PinMessageDto event = new PinMessageDto(10L, "message-1", java.time.Instant.parse("2026-07-05T10:00:00Z"), 2L);
+        PinMessageDeleteResponse event = new PinMessageDeleteResponse(10L, "message-1", 2L);
         when(chatParticipantsClient.getChatUsers(10L)).thenReturn(List.of(1L, 2L, 3L));
 
         handler.handle(GatewayMessageEventDto.messageUnpinned(event));
 
-        verify(userWebSocketSessions).pushMessagePinToUser(1L, event, false);
-        verify(userWebSocketSessions).pushMessagePinToUser(2L, event, false);
-        verify(userWebSocketSessions).pushMessagePinToUser(3L, event, false);
+        verify(userWebSocketSessions).pushMessageUnpinToUser(1L, event);
+        verify(userWebSocketSessions).pushMessageUnpinToUser(2L, event);
+        verify(userWebSocketSessions).pushMessageUnpinToUser(3L, event);
     }
 }

@@ -28,19 +28,19 @@ public class MessageKafkaProducer {
         gatewayMessageEventKafkaTemplate.send(gatewayMessageEventsTopic, key, GatewayMessageEventDto.messageCreated(messageDto));
     }
 
-    public void sendPinEvent(PinMessageDto pinMessageDto) {
+    public void sendPinEvent(PinMessageInfoDto pinMessageInfoDto) {
         gatewayMessageEventKafkaTemplate.send(
                 gatewayMessageEventsTopic,
-                String.valueOf(pinMessageDto.chatId()),
-                GatewayMessageEventDto.messagePinned(pinMessageDto)
+                String.valueOf(pinMessageInfoDto.chatId()),
+                GatewayMessageEventDto.messagePinned(pinMessageInfoDto)
         );
     }
 
-    public void sendUnpinEvent(PinMessageDto pinMessageDto) {
+    public void sendUnpinEvent(PinMessageDeleteResponse pinMessageDeleteResponse) {
         gatewayMessageEventKafkaTemplate.send(
                 gatewayMessageEventsTopic,
-                String.valueOf(pinMessageDto.chatId()),
-                GatewayMessageEventDto.messageUnpinned(pinMessageDto)
+                String.valueOf(pinMessageDeleteResponse.chatId()),
+                GatewayMessageEventDto.messageUnpinned(pinMessageDeleteResponse)
         );
     }
 

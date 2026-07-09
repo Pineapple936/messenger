@@ -6,13 +6,16 @@ import lombok.NonNull;
 
 import java.time.Instant;
 
-public record PinMessageDto(
+public record PinMessageInfoDto(
         @Positive
         @NonNull
         Long chatId,
 
         @NotBlank
         String messageId,
+
+        @NotBlank
+        String content,
 
         @NonNull
         Instant messageSendAt,

@@ -416,7 +416,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/PinMessageDto'
+                  $ref: '#/components/schemas/PinMessageInfoDto'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -435,6 +435,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /message/edit:
     put:
       tags: [Message]
@@ -1077,9 +1079,9 @@ components:
         reactedByCurrentUser:
           type: boolean
           example: true
-    PinMessageDto:
+    PinMessageInfoDto:
       type: object
-      required: [chatId, messageId, messageSendAt, pinnedByUserId]
+      required: [chatId, messageId, content, messageSendAt, pinnedByUserId]
       properties:
         chatId:
           type: integer
@@ -1090,6 +1092,10 @@ components:
           type: string
           minLength: 1
           example: 65f0c2e5a6f8d45000112233
+        content:
+          type: string
+          minLength: 1
+          example: Закрепленное сообщение
         messageSendAt:
           type: string
           format: date-time

@@ -1,13 +1,6 @@
 package messenger.messageservice.api.mapper;
 
-import messenger.commonlibs.dto.messageservice.ForwardedMessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
-import messenger.commonlibs.dto.messageservice.PinMessageDto;
-import messenger.commonlibs.dto.messageservice.ReactionOnMessage;
+import messenger.commonlibs.dto.messageservice.*;
 import messenger.messageservice.api.dto.CreateMessage;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.domain.Message;
@@ -33,10 +26,6 @@ public class MessageMapper {
                 .repliedMessageId(request.repliedMessageId())
                 .forwardedFromMessageId(request.forwardedFromMessageId())
                 .build();
-    }
-
-    public MessageResponse toResponse(Message message, Set<ReactionOnMessage> reactions) {
-        return toResponse(message, reactions, null, null);
     }
 
     public MessageResponse toResponse(
@@ -98,30 +87,31 @@ public class MessageMapper {
                 .build();
     }
 
-    public PinMessageDto toPinDto(PinnedMessage pinnedMessage) {
-        return new PinMessageDto(
+    public PinMessageInfoDto toPinDto(PinnedMessage pinnedMessage, String content) {
+        return new PinMessageInfoDto(
                 pinnedMessage.getChatId(),
                 pinnedMessage.getMessageId(),
+                content,
                 pinnedMessage.getMessageSendAt(),
                 pinnedMessage.getPinnedByUserId()
         );
     }
 
-    public PinMessageDto toPinEvent(Message message, Long userId) {
-        return new PinMessageDto(
+    public PinMessageInfoDto toPinEvent(Message message, Long userId) {
+        return new PinMessageInfoDto(
                 message.getChatId(),
                 message.getId(),
+                message.getContent(),
                 message.getSendAt(),
                 userId
         );
     }
 
-    public PinMessageDto toPinEvent(PinnedMessage pinnedMessage, Long userId) {
-        return new PinMessageDto(
+    public PinMessageDeleteResponse toPinDelete(PinnedMessage pinnedMessage, Long unpinnedUserId) {
+        return new PinMessageDeleteResponse(
                 pinnedMessage.getChatId(),
                 pinnedMessage.getMessageId(),
-                pinnedMessage.getMessageSendAt(),
-                userId
+                unpinnedUserId
         );
     }
 

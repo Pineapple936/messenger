@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -164,13 +165,25 @@ public class MessageService {
         requireChatMember(unpinnedUserId, pinnedMessage.getChatId());
 
         pinnedMessageRepository.delete(pinnedMessage);
-        messageKafkaProducer.sendUnpinEvent(messageMapper.toPinEvent(pinnedMessage, unpinnedUserId));
+        messageKafkaProducer.sendUnpinEvent(messageMapper.toPinDelete(pinnedMessage, unpinnedUserId));
     }
 
     @Transactional(readOnly = true)
-    public List<PinnedMessage> getPinnedMessageByChatId(Long userId, Long chatId) {
+    public List<PinMessageInfoDto> getPinnedMessageByChatId(Long userId, Long chatId) {
         requireChatMember(userId, chatId);
-        return pinnedMessageRepository.findAllByChatIdOrderByMessageSendAtAsc(chatId);
+        List<PinnedMessage> pinnedMessages = pinnedMessageRepository.findAllByChatIdOrderByMessageSendAtAsc(chatId);
+        Map<String, Message> messages = messageRepository.findAllById(pinnedMessages.stream().map(PinnedMessage::getMessageId).toList()).stream()
+                .collect(Collectors.toMap(Message::getId, Function.identity()));
+        return pinnedMessages.stream()
+                .map(item -> {
+                    Message message = messages.get(item.getMessageId());
+                    if (message == null) {
+                        return null;
+                    }
+                    return messageMapper.toPinDto(item, message.getContent());
+                })
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -260,7 +273,7 @@ public class MessageService {
 
         List<String> photoLinks = photoLinks(message);
         messageRepository.deleteById(messageId);
-        unpinDeletedMessage(userId, message);
+        unpinDeletedMessage(message, userId);
         deleteMediaIfUnreferenced(photoLinks);
         messageKafkaProducer.sendDeleteEvent(messageMapper.toDeleteEvent(message));
     }
@@ -402,10 +415,10 @@ public class MessageService {
         mediaHttpClient.deleteByListName(unreferencedPhotoLinks);
     }
 
-    private void unpinDeletedMessage(Long userId, Message message) {
+    private void unpinDeletedMessage(Message message, Long unpinnedUserId) {
         pinnedMessageRepository.findByMessageId(message.getId()).ifPresent(pinnedMessage -> {
             pinnedMessageRepository.delete(pinnedMessage);
-            messageKafkaProducer.sendUnpinEvent(messageMapper.toPinEvent(message, userId));
+            messageKafkaProducer.sendUnpinEvent(messageMapper.toPinDelete(pinnedMessage, unpinnedUserId));
         });
     }
 }

@@ -3,12 +3,7 @@ package messenger.gatewayservice.ws;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import messenger.commonlibs.dto.messageservice.MessageDto;
-import messenger.commonlibs.dto.messageservice.ForwardedMessageDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageEditEventDto;
-import messenger.commonlibs.dto.messageservice.MessageReadEventDto;
-import messenger.commonlibs.dto.messageservice.PinMessageDto;
+import messenger.commonlibs.dto.messageservice.*;
 import messenger.commonlibs.dto.reactionservice.GatewayReactionEventDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -160,18 +155,37 @@ public class UserWebSocketSessions {
         }
     }
 
-    public void pushMessagePinToUser(Long userId, PinMessageDto pinMessageDto, boolean pinned) {
+    public void pushMessagePinToUser(Long userId, PinMessageInfoDto pinMessageInfoDto) {
         Set<Sinks.Many<String>> userSinks = sessions.get(userId);
         if (userSinks == null || userSinks.isEmpty()) {
             return;
         }
 
         String payload = toJsonSafe(new OutgoingMessagePinEvent(
-                pinned ? "message_pin" : "message_unpin",
-                pinMessageDto.chatId(),
-                pinMessageDto.messageId(),
-                pinMessageDto.messageSendAt() != null ? pinMessageDto.messageSendAt().toString() : null,
-                pinMessageDto.pinnedByUserId()
+                "message_pin",
+                pinMessageInfoDto.chatId(),
+                pinMessageInfoDto.messageId(),
+                pinMessageInfoDto.content(),
+                pinMessageInfoDto.messageSendAt() != null ? pinMessageInfoDto.messageSendAt().toString() : null,
+                pinMessageInfoDto.pinnedByUserId()
+        ));
+
+        for (Sinks.Many<String> sink : userSinks) {
+            emitToSink(sink, payload);
+        }
+    }
+
+    public void pushMessageUnpinToUser(Long userId, PinMessageDeleteResponse pinMessageDeleteResponse) {
+        Set<Sinks.Many<String>> userSinks = sessions.get(userId);
+        if (userSinks == null || userSinks.isEmpty()) {
+            return;
+        }
+
+        String payload = toJsonSafe(new OutgoingMessageUnpinEvent(
+                "message_unpin",
+                pinMessageDeleteResponse.chatId(),
+                pinMessageDeleteResponse.messageId(),
+                pinMessageDeleteResponse.unpinnedByUserId()
         ));
 
         for (Sinks.Many<String> sink : userSinks) {
@@ -386,8 +400,17 @@ public class UserWebSocketSessions {
             String type,
             Long chatId,
             String messageId,
+            String content,
             String messageSendAt,
             Long pinnedByUserId
+    ) {
+    }
+
+    private record OutgoingMessageUnpinEvent(
+            String type,
+            Long chatId,
+            String messageId,
+            Long unpinnedByUserId
     ) {
     }
 

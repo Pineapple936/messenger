@@ -4,6 +4,7 @@ import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListRequest;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListResponse;
+import messenger.commonlibs.dto.messageservice.PinMessageInfoDto;
 import messenger.messageservice.api.dto.MessageListResponse;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
@@ -307,6 +308,7 @@ class MessageServiceTest {
         verify(messageKafkaProducer).sendPinEvent(argThat(event ->
                 event.chatId().equals(10L)
                         && event.messageId().equals("message-1")
+                        && event.content().equals("text")
                         && event.messageSendAt().equals(message.getSendAt())
                         && event.pinnedByUserId().equals(1L)
         ));
@@ -345,9 +347,29 @@ class MessageServiceTest {
         verify(messageKafkaProducer).sendUnpinEvent(argThat(event ->
                 event.chatId().equals(10L)
                         && event.messageId().equals("message-1")
-                        && event.messageSendAt().equals(pinnedSource.getSendAt())
-                        && event.pinnedByUserId().equals(1L)
+                        && event.unpinnedByUserId().equals(1L)
         ));
+    }
+
+    @Test
+    void getPinnedMessagesReturnsContentFromPinnedMessageIds() {
+        Message first = message("message-1", 10L, 2L, "first pin", null);
+        Message second = message("message-2", 10L, 3L, "second pin", null);
+        PinnedMessage firstPin = new PinnedMessage(first, 4L);
+        PinnedMessage secondPin = new PinnedMessage(second, 5L);
+        firstPin.setId("pin-1");
+        secondPin.setId("pin-2");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(pinnedMessageRepository.findAllByChatIdOrderByMessageSendAtAsc(10L)).thenReturn(List.of(firstPin, secondPin));
+        when(messageRepository.findAllById(List.of("message-1", "message-2"))).thenReturn(List.of(first, second));
+
+        List<PinMessageInfoDto> result = service.getPinnedMessageByChatId(1L, 10L);
+
+        assertThat(result).extracting(PinMessageInfoDto::messageId).containsExactly("message-1", "message-2");
+        assertThat(result).extracting(PinMessageInfoDto::content).containsExactly("first pin", "second pin");
+        assertThat(result).extracting(PinMessageInfoDto::pinnedByUserId).containsExactly(4L, 5L);
     }
 
     @Test
@@ -394,8 +416,7 @@ class MessageServiceTest {
         verify(messageKafkaProducer).sendUnpinEvent(argThat(event ->
                 event.chatId().equals(10L)
                         && event.messageId().equals("deleted")
-                        && event.messageSendAt().equals(deleted.getSendAt())
-                        && event.pinnedByUserId().equals(1L)
+                        && event.unpinnedByUserId().equals(1L)
         ));
     }
 
