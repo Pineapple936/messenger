@@ -3,6 +3,7 @@ package messenger.messageservice.domain;
 import lombok.RequiredArgsConstructor;
 import messenger.commonlibs.dto.messageservice.*;
 import messenger.messageservice.api.dto.MessageEditDto;
+import messenger.messageservice.api.dto.MessageListResponse;
 import messenger.messageservice.api.dto.MessageReadListDto;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
@@ -12,8 +13,8 @@ import messenger.messageservice.kafka.MessageKafkaProducer;
 import messenger.messageservice.external.ChatHttpClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -26,12 +27,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class MessageService {
+    private static final int DEFAULT_MESSAGES_LIMIT = 50;
+
     private final MessageRepository messageRepository;
+    private final PinnedMessageRepository pinnedMessageRepository;
     private final ChatHttpClient chatHttpClient;
     private final ReactionHttpClient reactionHttpClient;
     private final MediaHttpClient mediaHttpClient;
@@ -47,17 +52,13 @@ public class MessageService {
 
     @Transactional
     public MessageResponse saveAndPublish(MessageDto dto) {
-        if (!isChatMember(dto.userId(), dto.chatId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
-        }
+        requireChatMember(dto.userId(), dto.chatId());
 
         Message forwardedMessage = null;
         if (dto.forwardedFromMessageId() != null) {
             Message source = findById(dto.forwardedFromMessageId());
-            if (!isChatMember(dto.userId(), source.getChatId())) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User cannot access the source message");
-            }
-            forwardedMessage = forwardedSource(source);
+            requireChatMember(dto.userId(), source.getChatId());
+            forwardedMessage = source.getForwardedMessageId() == null ? source : findById(source.getForwardedMessageId());
         }
 
         Message repliedMessage = null;
@@ -71,74 +72,140 @@ public class MessageService {
         Message message = new Message(dto, repliedMessage, forwardedMessage);
         Message saved = messageRepository.save(message);
         messageKafkaProducer.sendMessageToKafka(messageMapper.toDto(saved, forwardedMessage));
-        return new MessageResponse(saved, Set.of(), repliedMessage, forwardedMessage);
+        return messageMapper.toResponse(saved, Set.of(), repliedMessage, forwardedMessage);
     }
 
-    public Message findById(String id) {
-        return messageRepository.findById(id).orElseThrow(
-                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found with id: " + id)
-        );
-    }
+    @Transactional(readOnly = true)
+    public MessageListResponse getMessages(
+            Long userId,
+            Long chatId,
+            String messageId,
+            Integer beforeLimit,
+            Integer afterLimit
+    ) {
+        requireChatMember(userId, chatId);
 
-    public Slice<MessageResponse> getSlice(Long userId, Long chatId, Integer limit, Integer offset) {
-        if (!isChatMember(userId, chatId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+        if (messageId == null && (beforeLimit != null || afterLimit != null)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "messageId is required when beforeLimit or afterLimit is used");
         }
 
-        Pageable page = PageRequest.of(offset, limit);
-        Slice<Message> messageSlice = messageRepository.findByChatIdOrderBySendAtDescIdDesc(chatId, page);
-        List<Message> messages = messageSlice.getContent();
-        Map<String, Message> referencedMessages = findReferencedMessages(messages);
-        Map<String, Set<ReactionOnMessage>> reactions = reactionHttpClient.getReactions(new ReactionsOnMessageListRequest(
-                userId,
-                messages.stream().map(Message::getId).toList()
-        )).reactions();
+        List<Message> messages;
+        String anchorMessageId = null;
+        boolean hasBefore;
+        boolean hasAfter;
 
-        return messageSlice.map(
-                item -> new MessageResponse(
-                        item,
-                        reactions.getOrDefault(item.getId(), Set.of()),
-                        item.getRepliedMessageId() == null ? null : referencedMessages.get(item.getRepliedMessageId()),
-                        item.getForwardedMessageId() == null ? null : referencedMessages.get(item.getForwardedMessageId())
-                )
-        );
+        if (messageId != null) {
+            int normalizedBeforeLimit = normalizeCursorLimit(beforeLimit);
+            int normalizedAfterLimit = normalizeCursorLimit(afterLimit);
+            Message anchorMessage = findMessageInChat(chatId, messageId);
+            anchorMessageId = anchorMessage.getId();
+
+            Slice<Message> newer = findAfter(chatId, anchorMessage, normalizedAfterLimit);
+            Slice<Message> older = findBefore(chatId, anchorMessage, normalizedBeforeLimit);
+
+            if (beforeLimit != null && afterLimit != null) {
+                messages = aroundMessages(anchorMessage, newer.getContent(), older.getContent());
+            } else if (afterLimit != null) {
+                messages = newer.getContent();
+            } else if (beforeLimit != null) {
+                messages = older.getContent();
+            } else {
+                messages = List.of(anchorMessage);
+            }
+
+            hasBefore = beforeLimit != null ? older.hasNext() : normalizedBeforeLimit == 0;
+            hasAfter = afterLimit != null ? newer.hasNext() : normalizedAfterLimit == 0;
+        } else {
+            Slice<Message> latest = messageRepository.findByChatIdOrderBySendAtDescIdDesc(
+                    chatId,
+                    PageRequest.ofSize(DEFAULT_MESSAGES_LIMIT)
+            );
+            messages = latest.getContent();
+            hasBefore = latest.hasNext();
+            hasAfter = false;
+        }
+
+        if (messages.isEmpty()) {
+            return new MessageListResponse(List.of(), anchorMessageId, false, false);
+        }
+
+        Map<String, Set<ReactionOnMessage>> reactions = reactionHttpClient.getReactions(
+                new ReactionsOnMessageListRequest(userId, messages.stream().map(Message::getId).toList())
+        ).reactions();
+
+        return new MessageListResponse(messageMapper.toResponses(
+                messages,
+                reactions,
+                findReferencedMessages(messages)
+        ), anchorMessageId, hasBefore, hasAfter);
     }
 
     public Boolean isMessageOwner(Long userId, String messageId) {
         return messageRepository.existsByUserIdAndId(userId, messageId);
     }
 
+    @Transactional
+    public void pinMessageById(Long pinnedUserId, String messageId) {
+        Message message = findById(messageId);
+        requireChatMember(pinnedUserId, message.getChatId());
+
+        if(pinnedMessageRepository.existsByMessageId(message.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Message is already pinned");
+        }
+
+        pinnedMessageRepository.save(new PinnedMessage(message, pinnedUserId));
+        messageKafkaProducer.sendPinEvent(messageMapper.toPinEvent(message, pinnedUserId));
+    }
+
+    @Transactional
+    public void unpinnedMessageById(Long unpinnedUserId, String messageId) {
+        PinnedMessage pinnedMessage = pinnedMessageRepository.findByMessageId(messageId).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Pinned message not found with id: " + messageId)
+        );
+        requireChatMember(unpinnedUserId, pinnedMessage.getChatId());
+
+        pinnedMessageRepository.delete(pinnedMessage);
+        messageKafkaProducer.sendUnpinEvent(messageMapper.toPinDelete(pinnedMessage, unpinnedUserId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PinMessageInfoDto> getPinnedMessageByChatId(Long userId, Long chatId) {
+        requireChatMember(userId, chatId);
+        List<PinnedMessage> pinnedMessages = pinnedMessageRepository.findAllByChatIdOrderByMessageSendAtAsc(chatId);
+        Map<String, Message> messages = messageRepository.findAllById(pinnedMessages.stream().map(PinnedMessage::getMessageId).toList()).stream()
+                .collect(Collectors.toMap(Message::getId, Function.identity()));
+        return pinnedMessages.stream()
+                .map(item -> {
+                    Message message = messages.get(item.getMessageId());
+                    if (message == null) {
+                        return null;
+                    }
+                    return messageMapper.toPinDto(item, message.getContent());
+                })
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public MessageAccessInfoDto getMessageAccessInfo(Long userId, String messageId) {
         Message message = findById(messageId);
-        if (!isChatMember(userId, message.getChatId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
-        }
-        return new MessageAccessInfoDto(message.getId(), message.getChatId());
+        requireChatMember(userId, message.getChatId());
+        return messageMapper.toAccessInfo(message);
     }
 
     @Transactional
     public void readMessageById(Long userId, String messageId) {
         Message message = findById(messageId);
+        requireChatMember(userId, message.getChatId());
 
-        if(isChatMember(userId, message.getChatId())) {
-            if (Objects.equals(message.getUserId(), userId)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sender cannot mark own message as read");
-            }
-
-            if (!message.getReadStatus()) {
-                message.setReadStatus(true);
-                messageRepository.save(message);
-                messageKafkaProducer.sendReadEvent(new MessageReadEventDto(
-                        message.getId(),
-                        message.getChatId(),
-                        userId,
-                        true
-                ));
-            }
+        if (Objects.equals(message.getUserId(), userId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sender cannot mark own message as read");
         }
-        else {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
+
+        if (!message.getReadStatus()) {
+            message.setReadStatus(true);
+            messageRepository.save(message);
+            messageKafkaProducer.sendReadEvent(messageMapper.toReadEvent(message, userId));
         }
     }
 
@@ -166,8 +233,7 @@ public class MessageService {
         if (!toUpdate.isEmpty()) {
             messageRepository.saveAll(toUpdate);
             for (Message message : toUpdate) {
-                messageKafkaProducer.sendReadEvent(new MessageReadEventDto(
-                        message.getId(), message.getChatId(), userId, true));
+                messageKafkaProducer.sendReadEvent(messageMapper.toReadEvent(message, userId));
             }
         }
     }
@@ -190,12 +256,7 @@ public class MessageService {
         message.setContent(dto.content());
         message.setEditStatus(true);
         Message saved = messageRepository.save(message);
-        messageKafkaProducer.sendEditEvent(new MessageEditEventDto(
-                saved.getId(),
-                saved.getChatId(),
-                saved.getContent(),
-                saved.getEditStatus()
-        ));
+        messageKafkaProducer.sendEditEvent(messageMapper.toEditEvent(saved));
         return saved;
     }
 
@@ -212,12 +273,9 @@ public class MessageService {
 
         List<String> photoLinks = photoLinks(message);
         messageRepository.deleteById(messageId);
+        unpinDeletedMessage(message, userId);
         deleteMediaIfUnreferenced(photoLinks);
-        messageKafkaProducer.sendDeleteEvent(new MessageDeleteEventDto(
-                message.getId(),
-                message.getChatId(),
-                message.getUserId()
-        ));
+        messageKafkaProducer.sendDeleteEvent(messageMapper.toDeleteEvent(message));
     }
 
     @Transactional
@@ -242,6 +300,66 @@ public class MessageService {
         redisTemplate.delete(key);
     }
 
+    private Message findById(String id) {
+        return messageRepository.findById(id).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found with id: " + id)
+        );
+    }
+
+    private Message findMessageInChat(Long chatId, String messageId) {
+        Message message = findById(messageId);
+        if (!Objects.equals(message.getChatId(), chatId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Message belongs to another chat");
+        }
+        return message;
+    }
+
+    private Slice<Message> findBefore(Long chatId, Message anchor, int limit) {
+        if (limit == 0) {
+            return new SliceImpl<>(List.of());
+        }
+
+        return messageRepository.findBefore(
+                chatId,
+                anchor.getSendAt(),
+                anchor.getId(),
+                PageRequest.ofSize(limit)
+        );
+    }
+
+    private Slice<Message> findAfter(Long chatId, Message anchor, int limit) {
+        if (limit == 0) {
+            return new SliceImpl<>(List.of());
+        }
+
+        return messageRepository.findAfter(
+                chatId,
+                anchor.getSendAt(),
+                anchor.getId(),
+                PageRequest.ofSize(limit)
+        );
+    }
+
+    private List<Message> aroundMessages(Message anchor, List<Message> newer, List<Message> older) {
+        List<Message> messages = new ArrayList<>(newer.size() + 1 + older.size());
+        messages.addAll(newer);
+        messages.add(anchor);
+        messages.addAll(older);
+        return messages;
+    }
+
+    private int normalizeCursorLimit(Integer limit) {
+        if (limit == null) {
+            return 0;
+        }
+
+        if (limit < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cursor limits must be greater than or equal to 0");
+        }
+
+        return Math.min(limit, DEFAULT_MESSAGES_LIMIT);
+    }
+
     private boolean isChatMember(Long userId, Long chatId) {
         String key = chatUserKeyPattern.formatted(chatId, userId);
         Boolean cache = redisTemplate.opsForValue().get(key);
@@ -258,11 +376,10 @@ public class MessageService {
         return hasUser;
     }
 
-    private Message forwardedSource(Message message) {
-        if (message.getForwardedMessageId() == null) {
-            return message;
+    private void requireChatMember(Long userId, Long chatId) {
+        if (!isChatMember(userId, chatId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chat not found or user is not a member");
         }
-        return findById(message.getForwardedMessageId());
     }
 
     private Map<String, Message> findReferencedMessages(List<Message> messages) {
@@ -296,5 +413,12 @@ public class MessageService {
             return;
         }
         mediaHttpClient.deleteByListName(unreferencedPhotoLinks);
+    }
+
+    private void unpinDeletedMessage(Message message, Long unpinnedUserId) {
+        pinnedMessageRepository.findByMessageId(message.getId()).ifPresent(pinnedMessage -> {
+            pinnedMessageRepository.delete(pinnedMessage);
+            messageKafkaProducer.sendUnpinEvent(messageMapper.toPinDelete(pinnedMessage, unpinnedUserId));
+        });
     }
 }

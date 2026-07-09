@@ -1,8 +1,6 @@
 package messenger.gatewayservice.kafka;
 
-import messenger.commonlibs.dto.messageservice.GatewayMessageEventDto;
-import messenger.commonlibs.dto.messageservice.MessageDeleteEventDto;
-import messenger.commonlibs.dto.messageservice.MessageDto;
+import messenger.commonlibs.dto.messageservice.*;
 import messenger.gatewayservice.ws.ChatParticipantsClient;
 import messenger.gatewayservice.ws.UserWebSocketSessions;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,5 +61,29 @@ class GatewayMessageEventHandlerTest {
         verify(userWebSocketSessions).pushMessageDeleteToUser(1L, event);
         verify(userWebSocketSessions, never()).pushMessageDeleteToUser(2L, event);
         verify(userWebSocketSessions).pushMessageDeleteToUser(3L, event);
+    }
+
+    @Test
+    void messagePinnedIsDeliveredToAllParticipants() {
+        PinMessageInfoDto event = new PinMessageInfoDto(10L, "message-1", "text", java.time.Instant.parse("2026-07-05T10:00:00Z"), 2L);
+        when(chatParticipantsClient.getChatUsers(10L)).thenReturn(List.of(1L, 2L, 3L));
+
+        handler.handle(GatewayMessageEventDto.messagePinned(event));
+
+        verify(userWebSocketSessions).pushMessagePinToUser(1L, event);
+        verify(userWebSocketSessions).pushMessagePinToUser(2L, event);
+        verify(userWebSocketSessions).pushMessagePinToUser(3L, event);
+    }
+
+    @Test
+    void messageUnpinnedIsDeliveredToAllParticipants() {
+        PinMessageDeleteResponse event = new PinMessageDeleteResponse(10L, "message-1", 2L);
+        when(chatParticipantsClient.getChatUsers(10L)).thenReturn(List.of(1L, 2L, 3L));
+
+        handler.handle(GatewayMessageEventDto.messageUnpinned(event));
+
+        verify(userWebSocketSessions).pushMessageUnpinToUser(1L, event);
+        verify(userWebSocketSessions).pushMessageUnpinToUser(2L, event);
+        verify(userWebSocketSessions).pushMessageUnpinToUser(3L, event);
     }
 }

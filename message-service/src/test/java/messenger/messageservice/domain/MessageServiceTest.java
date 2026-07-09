@@ -4,6 +4,8 @@ import messenger.commonlibs.dto.messageservice.MessageDto;
 import messenger.commonlibs.dto.messageservice.MessageAccessInfoDto;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListRequest;
 import messenger.commonlibs.dto.messageservice.ReactionsOnMessageListResponse;
+import messenger.commonlibs.dto.messageservice.PinMessageInfoDto;
+import messenger.messageservice.api.dto.MessageListResponse;
 import messenger.messageservice.api.dto.MessageResponse;
 import messenger.messageservice.api.mapper.MessageMapper;
 import messenger.messageservice.external.ChatHttpClient;
@@ -17,7 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -33,6 +35,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,6 +47,9 @@ class MessageServiceTest {
 
     @Mock
     private MessageRepository messageRepository;
+
+    @Mock
+    private PinnedMessageRepository pinnedMessageRepository;
 
     @Mock
     private ChatHttpClient chatHttpClient;
@@ -69,6 +75,7 @@ class MessageServiceTest {
     void setUp() {
         service = new MessageService(
                 messageRepository,
+                pinnedMessageRepository,
                 chatHttpClient,
                 reactionHttpClient,
                 mediaHttpClient,
@@ -117,7 +124,7 @@ class MessageServiceTest {
     }
 
     @Test
-    void getSliceLoadsReplyAndForwardReferencesInOneBatch() {
+    void getMessagesLoadsReplyAndForwardReferencesInOneBatch() {
         Message reply = message("reply", 10L, 2L, "reply text", null);
         Message source = message("source", 20L, 3L, "source text", List.of("source-photo"));
         Message item = message("item", 10L, 1L, null, null);
@@ -126,15 +133,15 @@ class MessageServiceTest {
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("chat:10:user:1")).thenReturn(true);
-        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.of(0, 50)))
-                .thenReturn(new SliceImpl<>(List.of(item), PageRequest.of(0, 50), false));
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.ofSize(50)))
+                .thenReturn(slice(item));
         when(messageRepository.findAllById(Set.of(reply.getId(), source.getId()))).thenReturn(List.of(reply, source));
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        Slice<MessageResponse> result = service.getSlice(1L, 10L, 50, 0);
+        MessageListResponse result = service.getMessages(1L, 10L, null, null, null);
 
-        MessageResponse response = result.getContent().getFirst();
+        MessageResponse response = result.messages().getFirst();
         assertThat(response.content()).isEqualTo(source.getContent());
         assertThat(response.photoLinks()).containsExactly("source-photo");
         assertThat(response.repliedMessage().id()).isEqualTo(reply.getId());
@@ -143,23 +150,121 @@ class MessageServiceTest {
     }
 
     @Test
-    void getSliceHandlesMessagesWithoutReplyOrForwardReferences() {
+    void getMessagesHandlesMessagesWithoutReplyOrForwardReferences() {
         Message item = message("item", 10L, 1L, "plain text", null);
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("chat:10:user:1")).thenReturn(true);
-        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.of(0, 50)))
-                .thenReturn(new SliceImpl<>(List.of(item), PageRequest.of(0, 50), false));
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.ofSize(50)))
+                .thenReturn(slice(item));
         when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
                 .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
 
-        Slice<MessageResponse> result = service.getSlice(1L, 10L, 50, 0);
+        MessageListResponse result = service.getMessages(1L, 10L, null, null, null);
 
-        MessageResponse response = result.getContent().getFirst();
+        MessageResponse response = result.messages().getFirst();
         assertThat(response.content()).isEqualTo("plain text");
         assertThat(response.repliedMessage()).isNull();
         assertThat(response.forwardedMessage()).isNull();
         verify(messageRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void getMessagesWithoutCursorLoadsLatestMessages() {
+        Message latest = message("m5", 10L, 3L, "latest", null);
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findByChatIdOrderBySendAtDescIdDesc(10L, PageRequest.ofSize(50)))
+                .thenReturn(slice(latest));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, null, null, null);
+
+        assertThat(result.messages()).extracting(MessageResponse::id).containsExactly(latest.getId());
+        assertThat(result.anchorMessageId()).isNull();
+    }
+
+    @Test
+    void getMessagesBeforeAnchorLoadsOlderMessages() {
+        Message anchor = message("m3", 10L, 1L, "anchor", null);
+        Message sameTimeOlder = message("m2", 10L, 2L, "same time older", null);
+        Message older = message("m1", 10L, 3L, "older", null);
+        older.setSendAt(NOW.minusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findById(anchor.getId())).thenReturn(Optional.of(anchor));
+        when(messageRepository.findBefore(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(sameTimeOlder, older));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, anchor.getId(), 2, null);
+
+        assertThat(result.messages()).extracting(MessageResponse::id)
+                .containsExactly(sameTimeOlder.getId(), older.getId());
+    }
+
+    @Test
+    void getMessagesAfterAnchorLoadsNewerMessages() {
+        Message anchor = message("m1", 10L, 1L, "anchor", null);
+        Message newer = message("m2", 10L, 2L, "newer", null);
+        newer.setSendAt(NOW.plusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findById(anchor.getId())).thenReturn(Optional.of(anchor));
+        when(messageRepository.findAfter(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(newer));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, anchor.getId(), null, 2);
+
+        assertThat(result.messages()).extracting(MessageResponse::id).containsExactly(newer.getId());
+        assertThat(result.anchorMessageId()).isEqualTo(anchor.getId());
+        assertThat(result.hasBefore()).isTrue();
+        assertThat(result.hasAfter()).isFalse();
+
+        ArgumentCaptor<Pageable> pageCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(messageRepository).findAfter(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), pageCaptor.capture());
+        assertThat(pageCaptor.getValue().getPageSize()).isEqualTo(2);
+    }
+
+    @Test
+    void getMessagesWithBeforeAndAfterLimitsLoadsNewerAnchorAndOlderMessages() {
+        Message newer = message("m5", 10L, 1L, "newer", null);
+        newer.setSendAt(NOW.plusSeconds(60));
+        Message anchor = message("m3", 10L, 1L, "anchor", null);
+        Message older = message("m1", 10L, 1L, "older", null);
+        older.setSendAt(NOW.minusSeconds(60));
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(messageRepository.findById(anchor.getId())).thenReturn(Optional.of(anchor));
+        when(messageRepository.findAfter(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(newer));
+        when(messageRepository.findBefore(eq(10L), eq(anchor.getSendAt()), eq(anchor.getId()), any()))
+                .thenReturn(slice(older));
+        when(reactionHttpClient.getReactions(any(ReactionsOnMessageListRequest.class)))
+                .thenReturn(new ReactionsOnMessageListResponse(Map.of()));
+
+        MessageListResponse result = service.getMessages(1L, 10L, anchor.getId(), 1, 1);
+
+        assertThat(result.messages()).extracting(MessageResponse::id)
+                .containsExactly(newer.getId(), anchor.getId(), older.getId());
+    }
+
+    @Test
+    void getMessagesRejectsCursorLimitsWithoutMessageId() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.getMessages(1L, 10L, null, 10, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("messageId is required");
     }
 
     @Test
@@ -191,12 +296,90 @@ class MessageServiceTest {
     }
 
     @Test
+    void pinMessageSavesPinAndPublishesGatewayEvent() {
+        Message message = message("message-1", 10L, 2L, "text", null);
+
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        service.pinMessageById(1L, "message-1");
+
+        verify(pinnedMessageRepository).save(any(PinnedMessage.class));
+        verify(messageKafkaProducer).sendPinEvent(argThat(event ->
+                event.chatId().equals(10L)
+                        && event.messageId().equals("message-1")
+                        && event.content().equals("text")
+                        && event.messageSendAt().equals(message.getSendAt())
+                        && event.pinnedByUserId().equals(1L)
+        ));
+    }
+
+    @Test
+    void pinMessageRejectsAlreadyPinnedMessage() {
+        Message message = message("message-1", 10L, 2L, "text", null);
+
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(pinnedMessageRepository.existsByMessageId("message-1")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.pinMessageById(1L, "message-1"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409 CONFLICT")
+                .hasMessageContaining("Message is already pinned");
+
+        verify(pinnedMessageRepository, never()).save(any(PinnedMessage.class));
+        verify(messageKafkaProducer, never()).sendPinEvent(any());
+    }
+
+    @Test
+    void unpinMessageDeletesPinAndPublishesGatewayEvent() {
+        Message pinnedSource = message("message-1", 10L, 2L, "text", null);
+        PinnedMessage pinnedMessage = new PinnedMessage(pinnedSource, 2L);
+
+        when(pinnedMessageRepository.findByMessageId("message-1")).thenReturn(Optional.of(pinnedMessage));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+
+        service.unpinnedMessageById(1L, "message-1");
+
+        verify(pinnedMessageRepository).delete(pinnedMessage);
+        verify(messageKafkaProducer).sendUnpinEvent(argThat(event ->
+                event.chatId().equals(10L)
+                        && event.messageId().equals("message-1")
+                        && event.unpinnedByUserId().equals(1L)
+        ));
+    }
+
+    @Test
+    void getPinnedMessagesReturnsContentFromPinnedMessageIds() {
+        Message first = message("message-1", 10L, 2L, "first pin", null);
+        Message second = message("message-2", 10L, 3L, "second pin", null);
+        PinnedMessage firstPin = new PinnedMessage(first, 4L);
+        PinnedMessage secondPin = new PinnedMessage(second, 5L);
+        firstPin.setId("pin-1");
+        secondPin.setId("pin-2");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("chat:10:user:1")).thenReturn(true);
+        when(pinnedMessageRepository.findAllByChatIdOrderByMessageSendAtAsc(10L)).thenReturn(List.of(firstPin, secondPin));
+        when(messageRepository.findAllById(List.of("message-1", "message-2"))).thenReturn(List.of(first, second));
+
+        List<PinMessageInfoDto> result = service.getPinnedMessageByChatId(1L, 10L);
+
+        assertThat(result).extracting(PinMessageInfoDto::messageId).containsExactly("message-1", "message-2");
+        assertThat(result).extracting(PinMessageInfoDto::content).containsExactly("first pin", "second pin");
+        assertThat(result).extracting(PinMessageInfoDto::pinnedByUserId).containsExactly(4L, 5L);
+    }
+
+    @Test
     void deleteByIdDeletesOnlyMediaLinksThatAreNoLongerReferenced() {
         Message deleted = message("deleted", 10L, 1L, "with media", List.of("keep", "remove"));
         Message remaining = message("remaining", 10L, 2L, "still uses media", List.of("keep"));
 
         when(messageRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
         when(messageRepository.findByPhotoLinksIn(List.of("keep", "remove"))).thenReturn(List.of(remaining));
+        when(pinnedMessageRepository.findByMessageId(deleted.getId())).thenReturn(Optional.empty());
 
         service.deleteById(1L, deleted.getId());
 
@@ -210,12 +393,31 @@ class MessageServiceTest {
         forwarded.setForwardedMessageId("source");
 
         when(messageRepository.findById(forwarded.getId())).thenReturn(Optional.of(forwarded));
+        when(pinnedMessageRepository.findByMessageId(forwarded.getId())).thenReturn(Optional.empty());
 
         service.deleteById(1L, forwarded.getId());
 
         verify(messageRepository).deleteById(forwarded.getId());
         verify(messageRepository, never()).findByPhotoLinksIn(any());
         verify(mediaHttpClient, never()).deleteByListName(any());
+    }
+
+    @Test
+    void deleteByIdUnpinsDeletedMessage() {
+        Message deleted = message("deleted", 10L, 1L, "text", null);
+        PinnedMessage pinnedMessage = new PinnedMessage(deleted, 1L);
+
+        when(messageRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
+        when(pinnedMessageRepository.findByMessageId(deleted.getId())).thenReturn(Optional.of(pinnedMessage));
+
+        service.deleteById(1L, deleted.getId());
+
+        verify(pinnedMessageRepository).delete(pinnedMessage);
+        verify(messageKafkaProducer).sendUnpinEvent(argThat(event ->
+                event.chatId().equals(10L)
+                        && event.messageId().equals("deleted")
+                        && event.unpinnedByUserId().equals(1L)
+        ));
     }
 
     private static Message message(String id, Long chatId, Long userId, String content, List<String> photoLinks) {
@@ -229,5 +431,9 @@ class MessageServiceTest {
         message.setEditStatus(false);
         message.setSendAt(NOW);
         return message;
+    }
+
+    private static SliceImpl<Message> slice(Message... messages) {
+        return new SliceImpl<>(List.of(messages));
     }
 }

@@ -14,28 +14,40 @@ public record GatewayMessageEventDto(
         MessageDto message,
         MessageReadEventDto messageReadEvent,
         MessageEditEventDto messageEditEvent,
-        MessageDeleteEventDto messageDeleteEvent
+        MessageDeleteEventDto messageDeleteEvent,
+        PinMessageInfoDto pinMessageEvent,
+        PinMessageDeleteResponse unpinMessageEvent
 ) {
     public enum EventType {
         MESSAGE_CREATED,
         MESSAGE_READ,
         MESSAGE_EDIT,
-        MESSAGE_DELETED
+        MESSAGE_DELETED,
+        MESSAGE_PINNED,
+        MESSAGE_UNPINNED
     }
 
     public static GatewayMessageEventDto messageCreated(MessageDto message) {
-        return new GatewayMessageEventDto(EventType.MESSAGE_CREATED, message.chatId(), message, null, null, null);
+        return new GatewayMessageEventDto(EventType.MESSAGE_CREATED, message.chatId(), message, null, null, null, null, null);
     }
 
     public static GatewayMessageEventDto messageRead(MessageReadEventDto messageReadEvent) {
-        return new GatewayMessageEventDto(EventType.MESSAGE_READ, messageReadEvent.chatId(), null, messageReadEvent, null, null);
+        return new GatewayMessageEventDto(EventType.MESSAGE_READ, messageReadEvent.chatId(), null, messageReadEvent, null, null, null, null);
     }
 
     public static GatewayMessageEventDto messageEdit(MessageEditEventDto messageEditEvent) {
-        return new GatewayMessageEventDto(EventType.MESSAGE_EDIT, messageEditEvent.chatId(), null, null, messageEditEvent, null);
+        return new GatewayMessageEventDto(EventType.MESSAGE_EDIT, messageEditEvent.chatId(), null, null, messageEditEvent, null, null, null);
     }
 
     public static GatewayMessageEventDto messageDeleted(MessageDeleteEventDto messageDeleteEvent) {
-        return new GatewayMessageEventDto(EventType.MESSAGE_DELETED, messageDeleteEvent.chatId(),null, null, null, messageDeleteEvent);
+        return new GatewayMessageEventDto(EventType.MESSAGE_DELETED, messageDeleteEvent.chatId(), null, null, null, messageDeleteEvent, null, null);
+    }
+
+    public static GatewayMessageEventDto messagePinned(PinMessageInfoDto pinMessageEvent) {
+        return new GatewayMessageEventDto(EventType.MESSAGE_PINNED, pinMessageEvent.chatId(), null, null, null, null, pinMessageEvent, null);
+    }
+
+    public static GatewayMessageEventDto messageUnpinned(PinMessageDeleteResponse unpinMessageEvent) {
+        return new GatewayMessageEventDto(EventType.MESSAGE_UNPINNED, unpinMessageEvent.chatId(), null, null, null, null, null, unpinMessageEvent);
     }
 }

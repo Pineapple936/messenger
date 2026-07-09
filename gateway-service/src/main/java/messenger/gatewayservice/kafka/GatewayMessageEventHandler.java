@@ -63,6 +63,24 @@ public class GatewayMessageEventHandler {
                     }
                 }
             }
+            case MESSAGE_PINNED -> {
+                if (messageEvent.pinMessageEvent() == null) {
+                    log.warn("Received MESSAGE_PINNED event without payload for chatId={}", messageEvent.chatId());
+                    return;
+                }
+                for (Long userId : users) {
+                    userWebSocketSessions.pushMessagePinToUser(userId, messageEvent.pinMessageEvent());
+                }
+            }
+            case MESSAGE_UNPINNED -> {
+                if (messageEvent.unpinMessageEvent() == null) {
+                    log.warn("Received MESSAGE_UNPINNED event without payload for chatId={}", messageEvent.chatId());
+                    return;
+                }
+                for (Long userId : users) {
+                    userWebSocketSessions.pushMessageUnpinToUser(userId, messageEvent.unpinMessageEvent());
+                }
+            }
         }
     }
 }
