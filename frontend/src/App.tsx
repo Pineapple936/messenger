@@ -11,20 +11,89 @@ import {
 } from "react";
 import { ApiError, createApiClient } from "./lib/api";
 
+// Bounded cache of object URLs for downloaded/previewed media. Insertion order doubles as
+// recency order (re-set moves a key to the end), so the oldest entries are evicted first.
+const MEDIA_BLOB_CACHE_LIMIT = 200;
 const mediaBlobCache = new Map<string, string>();
+
+// Fetches in progress, keyed by cache key, so concurrent viewers of the same media
+// (e.g. the same photo shown in a chat preview and an open thread) share one request
+// instead of racing and leaking whichever blob URL loses.
+type MediaFetchEntry = {
+  promise: Promise<string>;
+  progressListeners: Set<(progress: number) => void>;
+};
+const mediaBlobInFlight = new Map<string, MediaFetchEntry>();
+
+function cacheMediaBlob(key: string, blobUrl: string): void {
+  const existing = mediaBlobCache.get(key);
+  if (existing && existing !== blobUrl) {
+    URL.revokeObjectURL(existing);
+  }
+  mediaBlobCache.delete(key);
+  mediaBlobCache.set(key, blobUrl);
+
+  while (mediaBlobCache.size > MEDIA_BLOB_CACHE_LIMIT) {
+    const oldestKey = mediaBlobCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldestUrl = mediaBlobCache.get(oldestKey);
+    mediaBlobCache.delete(oldestKey);
+    if (oldestUrl && oldestUrl !== blobUrl) {
+      URL.revokeObjectURL(oldestUrl);
+    }
+  }
+}
+
+function getOrFetchMediaBlob(
+  key: string,
+  path: string,
+  fetchMedia: (path: string, onProgress?: (progress: number) => void) => Promise<string>,
+  onProgress?: (progress: number) => void
+): Promise<string> {
+  const cached = mediaBlobCache.get(key);
+  if (cached) {
+    return Promise.resolve(cached);
+  }
+
+  const existing = mediaBlobInFlight.get(key);
+  if (existing) {
+    if (onProgress) existing.progressListeners.add(onProgress);
+    return existing.promise;
+  }
+
+  const progressListeners = new Set<(progress: number) => void>();
+  if (onProgress) progressListeners.add(onProgress);
+
+  const promise = fetchMedia(path, (progress) => {
+    for (const listener of progressListeners) listener(progress);
+  })
+    .then((blobUrl) => {
+      mediaBlobInFlight.delete(key);
+      cacheMediaBlob(key, blobUrl);
+      return blobUrl;
+    })
+    .catch((error) => {
+      mediaBlobInFlight.delete(key);
+      throw error;
+    });
+
+  mediaBlobInFlight.set(key, { promise, progressListeners });
+  return promise;
+}
 import {
   RealtimeBridge,
   type RealtimeStatus,
   type SocketMessageEvent,
   type SocketMessageEditEvent,
   type SocketMessageDeleteEvent,
+  type SocketMessagePinEvent,
   type SocketMessageReadEvent,
   type SocketPresenceEvent,
   type SocketReactionEvent,
   type SocketTypingEvent
 } from "./lib/realtime";
 import { loadTokens, purgeLegacyStorage, saveTokens } from "./lib/storage";
-import type { ChatInfo, ChatMessage, ChatParticipantDto, KnownChat, MessageHistoryItem, Reaction, TokenPair, UserProfile } from "./types";
+import type { ChatInfo, ChatMessage, ChatParticipantDto, KnownChat, MessageHistoryItem, PinnedChatMessage, Reaction, TokenPair, UserProfile } from "./types";
 import { REACTION_EMOJIS } from "./types";
 
 type AuthMode = "login" | "register";
@@ -43,8 +112,11 @@ type ThemeMode = "light" | "dark";
 type ChatPagination = {
   initialized: boolean;
   loading: boolean;
-  nextOffset: number;
-  hasMore: boolean;
+  loadingMode: "initial" | "prepend" | "append" | "around" | null;
+  oldestMessageId: string | null;
+  newestMessageId: string | null;
+  hasBefore: boolean;
+  hasAfter: boolean;
 };
 
 type TimelineRow =
@@ -166,8 +238,11 @@ function createDefaultPagination(): ChatPagination {
   return {
     initialized: false,
     loading: false,
-    nextOffset: 0,
-    hasMore: true
+    loadingMode: null,
+    oldestMessageId: null,
+    newestMessageId: null,
+    hasBefore: true,
+    hasAfter: false
   };
 }
 
@@ -524,6 +599,17 @@ function compareMessages(left: ChatMessage, right: ChatMessage): number {
   return left.id.localeCompare(right.id);
 }
 
+function sortPinnedMessages(pins: PinnedChatMessage[]): PinnedChatMessage[] {
+  return [...pins].sort((left, right) => {
+    const leftTime = Date.parse(left.messageSendAt);
+    const rightTime = Date.parse(right.messageSendAt);
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return compareServerIds(left.messageId, right.messageId);
+  });
+}
+
 function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   const merged = new Map<string, ChatMessage>();
 
@@ -563,6 +649,32 @@ function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]): Cha
   }
 
   return Array.from(merged.values()).sort(compareMessages);
+}
+
+function getOldestServerMessageId(messages: ChatMessage[]): string | null {
+  for (const message of messages) {
+    const serverId = normalizeServerId(message.serverId);
+    if (serverId) {
+      return serverId;
+    }
+  }
+
+  return null;
+}
+
+function getNewestServerMessageId(messages: ChatMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const serverId = normalizeServerId(messages[index].serverId);
+    if (serverId) {
+      return serverId;
+    }
+  }
+
+  return null;
+}
+
+function findMessageElementByServerId(serverId: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(`server-${serverId}`)}"]`);
 }
 
 function parseMessageTime(createdAt: string | null): number | null {
@@ -712,10 +824,9 @@ function AttachmentView({ url, mine, fetchMedia }: {
       : `/media/download/${url}`;
 
     const startFetch = () => {
-      fetchMedia(path, (p) => { if (!cancelled) setProgress(p); })
+      getOrFetchMediaBlob(url, path, fetchMedia, (p) => { if (!cancelled) setProgress(p); })
         .then(u => {
-          if (cancelled) { URL.revokeObjectURL(u); return; }
-          mediaBlobCache.set(url, u);
+          if (cancelled) return;
           setBlobSrc(u);
         })
         .catch((err: unknown) => {
@@ -828,10 +939,9 @@ function AvatarImage({ name, seed, avatarUrl, size, fetchMedia, children }: {
       ? `/media/proxy?publicUrl=${encodeURIComponent(avatarUrl)}`
       : `/media/download/${avatarUrl}`;
 
-    fetchMedia(path)
+    getOrFetchMediaBlob(avatarUrl, path, fetchMedia)
       .then((u) => {
-        if (cancelled) { URL.revokeObjectURL(u); return; }
-        mediaBlobCache.set(avatarUrl, u);
+        if (cancelled) return;
         setBlobSrc(u);
         setLoading(false);
       })
@@ -1099,6 +1209,13 @@ function App() {
   const [chatSearchError, setChatSearchError] = useState<string | null>(null);
   const [createChatBusy, setCreateChatBusy] = useState(false);
   const [deleteMessageBusyById, setDeleteMessageBusyById] = useState<Record<string, boolean>>({});
+  const [pinMessageBusyById, setPinMessageBusyById] = useState<Record<string, boolean>>({});
+  const [pinnedMessagesByChatId, setPinnedMessagesByChatId] = useState<Record<number, PinnedChatMessage[]>>({});
+  // Index into activeChatPins (ascending by pin time) — which pin the segmented indicator
+  // currently points at. Advances on click (jump to next pin) and follows scroll position.
+  const [activePinnedIndex, setActivePinnedIndex] = useState(-1);
+  const [pinnedListOpen, setPinnedListOpen] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [messageMenu, setMessageMenu] = useState<MessageContextMenuState | null>(null);
   const [chatMenu, setChatMenu] = useState<ChatContextMenuState | null>(null);
 
@@ -1162,6 +1279,7 @@ function App() {
   const [typingByChatId, setTypingByChatId] = useState<Record<number, Record<number, number>>>({});
   const typingTimeoutsRef = useRef<Record<string, number>>({});
   const lastTypingSentRef = useRef<number>(0);
+  const highlightMessageTimeoutRef = useRef<number | null>(null);
 
   // Forward message
   const [forwardModalMessage, setForwardModalMessage] = useState<ChatMessage | null>(null);
@@ -1174,6 +1292,14 @@ function App() {
 
   // Scroll position per chat
   const scrollPositionByChat = useRef<Record<number, number>>({});
+
+  // Bumped whenever a chat's loaded window changes for a reason other than the in-flight
+  // request itself (e.g. jumping to a pinned message while a prepend/append was pending),
+  // so a stale response can detect it's no longer relevant and discard itself.
+  const historyWindowVersionRef = useRef<Record<string, number>>({});
+  // A prepend/append request that arrived while another load was already in flight for the
+  // same chat; retried once the in-flight load finishes instead of being silently dropped.
+  const pendingHistoryLoadByChatRef = useRef<Record<string, "prepend" | "append">>({});
 
   // Group chat avatar uploading
   const [groupAvatarUploading, setGroupAvatarUploading] = useState(false);
@@ -1242,6 +1368,8 @@ function App() {
     setUnreadByChatId({});
     setMessagesByChat({});
     paginationRef.current = {};
+    historyWindowVersionRef.current = {};
+    pendingHistoryLoadByChatRef.current = {};
     readSyncedServerIdsByChatRef.current = {};
     readSyncInFlightRef.current.clear();
     setPaginationByChat({});
@@ -1252,6 +1380,8 @@ function App() {
     setPresenceByUserId({});
     setPresencePendingOfflineByUserId({});
     setDeleteMessageBusyById({});
+    setPinMessageBusyById({});
+    setPinnedMessagesByChatId({});
     setNewChatTagInput("");
     setChatSearchResults([]);
     setChatSearchBusy(false);
@@ -1511,6 +1641,30 @@ function App() {
     });
   }, []);
 
+  // Refreshes createdAt alongside delivery so the WS echo-match window (LOCAL_ECHO_MATCH_WINDOW_MS)
+  // is measured from the retry attempt, not the original (possibly long-stale) send time — otherwise
+  // a retry sent >15s after the first attempt fails the echo match and the message gets duplicated.
+  const resetMessageForRetry = useCallback((chatId: number, messageId: string) => {
+    wsMatchedLocalMessageIdsRef.current.delete(messageId);
+    setMessagesByChat((previous) => {
+      const key = String(chatId);
+      const current = previous[key] ?? [];
+
+      return {
+        ...previous,
+        [key]: current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                delivery: "pending",
+                createdAt: formatLocalDateTime(Date.now())
+              }
+            : message
+        )
+      };
+    });
+  }, []);
+
   const updateMessagePhotoLinks = useCallback((chatId: number, messageId: string, photoLinks: string[]) => {
     setMessagesByChat((previous) => {
       const key = String(chatId);
@@ -1760,10 +1914,15 @@ function App() {
     let bestCandidateId: string | null = null;
     let bestCandidateDistance = Number.POSITIVE_INFINITY;
 
-    for (let page = 0; page < MESSAGE_LOOKUP_MAX_PAGES; page += 1) {
-      const slice = await api.getMessages(message.chatId, MESSAGE_LOOKUP_PAGE_SIZE, page);
+    let anchorMessageId: string | null = null;
 
-      for (const historyItem of slice.content) {
+    for (let page = 0; page < MESSAGE_LOOKUP_MAX_PAGES; page += 1) {
+      const response = await api.getMessages(
+        message.chatId,
+        anchorMessageId ? { messageId: anchorMessageId, beforeLimit: MESSAGE_LOOKUP_PAGE_SIZE } : {}
+      );
+
+      for (const historyItem of response.messages) {
         if (historyItem.userId !== message.userId || historyItem.content !== message.content) {
           continue;
         }
@@ -1792,12 +1951,30 @@ function App() {
         }
       }
 
-      if (slice.last || slice.content.length === 0) {
+      if (!response.hasBefore || response.messages.length === 0) {
+        break;
+      }
+
+      anchorMessageId = normalizeServerId(response.messages[response.messages.length - 1]?.id ?? undefined);
+      if (!anchorMessageId) {
         break;
       }
     }
     return bestCandidateId;
   }, [api]);
+
+  // Shared by edit/delete: use the known serverId, or look it up (and persist it onto the
+  // local message) when the optimistic local message hasn't been reconciled yet.
+  const ensureMessageServerId = useCallback(async (message: ChatMessage): Promise<string | null> => {
+    let serverId = normalizeServerId(message.serverId);
+    if (!serverId) {
+      serverId = await resolveServerIdForMessage(message);
+      if (serverId) {
+        updateMessageServerId(message.chatId, message.id, serverId);
+      }
+    }
+    return serverId;
+  }, [resolveServerIdForMessage, updateMessageServerId]);
 
   const syncReadReceiptsForActiveChat = useCallback(async () => {
     if (!profile || activeChatId === null) {
@@ -1855,53 +2032,88 @@ function App() {
     }
   }, [activeChatId, api, messagesByChat, profile]);
 
-  const loadHistoryPage = useCallback(async (chatId: number, mode: "initial" | "prepend") => {
+  const loadHistoryPage = useCallback(async (
+    chatId: number,
+    mode: "initial" | "prepend" | "append" | "around",
+    anchorMessageId?: string
+  ): Promise<boolean> => {
     if (!profile) {
-      return;
+      return false;
     }
 
     const key = String(chatId);
     const pagination = getChatPagination(paginationRef.current, key);
+    const loadVersion = historyWindowVersionRef.current[key] ?? 0;
 
     if (pagination.loading) {
-      return;
+      if (mode === "prepend" || mode === "append") {
+        pendingHistoryLoadByChatRef.current[key] = mode;
+      }
+      return false;
     }
 
-    if (mode === "prepend" && (!pagination.initialized || !pagination.hasMore)) {
-      return;
+    if (mode === "prepend" && (!pagination.initialized || !pagination.hasBefore || !pagination.oldestMessageId)) {
+      return false;
     }
 
-    const page = mode === "initial" ? 0 : pagination.nextOffset;
+    if (mode === "append" && (!pagination.initialized || !pagination.hasAfter || !pagination.newestMessageId)) {
+      return false;
+    }
+
+    if (mode === "around" && !anchorMessageId) {
+      return false;
+    }
+
     const timeline = timelineRef.current;
     const previousHeight = timeline?.scrollHeight ?? 0;
     const previousTop = timeline?.scrollTop ?? 0;
+    if (mode === "append") {
+      stickToBottomRef.current = false;
+    }
 
     setPaginationForChat(chatId, (current) => ({
       ...current,
       loading: true,
+      loadingMode: mode,
       ...(mode === "initial"
         ? {
             initialized: false,
-            nextOffset: 0,
-            hasMore: true
+            oldestMessageId: null,
+            newestMessageId: null,
+            hasBefore: true,
+            hasAfter: false
           }
         : {})
     }));
 
     try {
-      const slice = await api.getMessages(chatId, HISTORY_PAGE_SIZE, page);
-      const incoming = slice.content.map((message) => toHistoryChatMessage(message, profile.userId));
+      const response = await api.getMessages(chatId, {
+        ...(mode === "prepend" && pagination.oldestMessageId ? { messageId: pagination.oldestMessageId, beforeLimit: HISTORY_PAGE_SIZE } : {}),
+        ...(mode === "append" && pagination.newestMessageId ? { messageId: pagination.newestMessageId, afterLimit: HISTORY_PAGE_SIZE } : {}),
+        ...(mode === "around" && anchorMessageId ? {
+          messageId: anchorMessageId,
+          beforeLimit: Math.floor(HISTORY_PAGE_SIZE / 2),
+          afterLimit: HISTORY_PAGE_SIZE - Math.floor(HISTORY_PAGE_SIZE / 2) - 1
+        } : {})
+      });
+      if ((historyWindowVersionRef.current[key] ?? 0) !== loadVersion) {
+        return false;
+      }
+
+      const incoming = response.messages.map((message) => toHistoryChatMessage(message, profile.userId));
       ensureUserNamesLoaded(incoming.flatMap((message) => [
         message.userId,
         ...(message.forwardedMessage ? [message.forwardedMessage.userId] : [])
       ]));
 
+      let mergedMessages: ChatMessage[] = [];
       setMessagesByChat((previous) => {
         const current = previous[key] ?? [];
         const sanitizedCurrent = pruneLocalEchoes(current, incoming);
+        mergedMessages = mergeChatMessages(sanitizedCurrent, incoming);
         return {
           ...previous,
-          [key]: mergeChatMessages(sanitizedCurrent, incoming)
+          [key]: mergedMessages
         };
       });
 
@@ -1923,16 +2135,49 @@ function App() {
         }).catch(() => undefined);
       }
 
-      setPaginationForChat(chatId, (current) => ({
-        ...current,
+      setPaginationForChat(chatId, (previousPagination) => ({
+        ...previousPagination,
         loading: false,
+        loadingMode: null,
         initialized: true,
-        nextOffset: page + 1,
-        hasMore: !slice.last
+        oldestMessageId: getOldestServerMessageId(mergedMessages),
+        newestMessageId: getNewestServerMessageId(mergedMessages),
+        hasBefore: mode === "append" ? previousPagination.hasBefore : response.hasBefore,
+        hasAfter: mode === "prepend" ? previousPagination.hasAfter : response.hasAfter
       }));
+
+      if ((mode === "initial" || mode === "around") && response.anchorMessageId && response.hasAfter) {
+        const anchorId = response.anchorMessageId;
+        requestAnimationFrame(() => {
+          if (activeChatIdRef.current !== chatId) {
+            return;
+          }
+          const element = findMessageElementByServerId(anchorId);
+          if (element) {
+            stickToBottomRef.current = false;
+            element.scrollIntoView({ behavior: "auto", block: "center" });
+          }
+        });
+        return true;
+      }
+
+      if (mode === "around" && response.anchorMessageId) {
+        const anchorId = response.anchorMessageId;
+        requestAnimationFrame(() => {
+          if (activeChatIdRef.current !== chatId) {
+            return;
+          }
+          const element = findMessageElementByServerId(anchorId);
+          element?.scrollIntoView({ behavior: "auto", block: "center" });
+        });
+        return true;
+      }
 
       if (mode === "initial") {
         requestAnimationFrame(() => {
+          if (activeChatIdRef.current !== chatId) {
+            return;
+          }
           const saved = scrollPositionByChat.current[chatId];
           if (saved !== undefined && timelineRef.current) {
             timelineRef.current.scrollTop = saved;
@@ -1942,27 +2187,173 @@ function App() {
             scrollToBottom();
           }
         });
-        return;
+        return true;
       }
 
       requestAnimationFrame(() => {
+        if (activeChatIdRef.current !== chatId) {
+          return;
+        }
         const container = timelineRef.current;
         if (!container) {
           return;
         }
 
+        const latest = getChatPagination(paginationRef.current, key);
+        if (mode === "append") {
+          const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+          if (
+            latest.initialized &&
+            !latest.loading &&
+            latest.hasAfter &&
+            distanceToBottom <= TOP_LOAD_THRESHOLD
+          ) {
+            void loadHistoryPage(chatId, "append");
+          }
+          return;
+        }
+
         const newHeight = container.scrollHeight;
         container.scrollTop = Math.max(0, newHeight - previousHeight + previousTop);
+
+        if (
+          mode === "prepend" &&
+          latest.initialized &&
+          !latest.loading &&
+          latest.hasBefore &&
+          container.scrollTop <= TOP_LOAD_THRESHOLD
+        ) {
+          void loadHistoryPage(chatId, "prepend");
+        }
       });
+      return true;
     } catch (error) {
       setPaginationForChat(chatId, (current) => ({
         ...current,
         loading: false,
+        loadingMode: null,
         initialized: true
       }));
       setNotice(toMessageText(error));
+      return false;
+    } finally {
+      if ((historyWindowVersionRef.current[key] ?? 0) !== loadVersion) {
+        return false;
+      }
+
+      const pendingMode = pendingHistoryLoadByChatRef.current[key];
+      if (pendingMode) {
+        delete pendingHistoryLoadByChatRef.current[key];
+        window.setTimeout(() => {
+          const latest = getChatPagination(paginationRef.current, key);
+          if (!latest.loading) {
+            void loadHistoryPage(chatId, pendingMode);
+          }
+        }, 0);
+      }
     }
   }, [api, ensureUserNamesLoaded, profile, scrollToBottom, setPaginationForChat, setReactionsByMessageId]);
+
+  // Jumps to a pinned message that may be far outside the currently loaded window. Replaces
+  // the loaded window (rather than merging with whatever was loaded before) because the two
+  // windows are usually not contiguous — merging them would silently splice two disjoint
+  // chunks of history together with a gap in between that no scroll trigger would ever fill.
+  // Not-yet-confirmed local sends (no serverId yet) are carried over so an in-flight message
+  // isn't dropped just because the user jumped to a pin while it was sending.
+  const loadPinnedMessageWindow = useCallback(async (chatId: number, serverMessageId: string): Promise<boolean> => {
+    if (!profile) {
+      return false;
+    }
+
+    const key = String(chatId);
+    delete pendingHistoryLoadByChatRef.current[key];
+    const windowVersion = (historyWindowVersionRef.current[key] ?? 0) + 1;
+    historyWindowVersionRef.current[key] = windowVersion;
+    setPaginationForChat(chatId, (current) => ({
+      ...current,
+      loading: true,
+      loadingMode: "around"
+    }));
+
+    const response = await api.getMessages(chatId, {
+      messageId: serverMessageId,
+      beforeLimit: Math.floor(HISTORY_PAGE_SIZE / 2),
+      afterLimit: HISTORY_PAGE_SIZE - Math.floor(HISTORY_PAGE_SIZE / 2) - 1
+    });
+    if ((historyWindowVersionRef.current[key] ?? 0) !== windowVersion) {
+      return false;
+    }
+
+    const incoming = response.messages.map((message) => toHistoryChatMessage(message, profile.userId));
+
+    if (!incoming.some((message) => normalizeServerId(message.serverId) === serverMessageId)) {
+      setPaginationForChat(chatId, (current) => ({
+        ...current,
+        loading: false,
+        loadingMode: null,
+        initialized: true
+      }));
+      return false;
+    }
+
+    ensureUserNamesLoaded(incoming.flatMap((message) => [
+      message.userId,
+      ...(message.forwardedMessage ? [message.forwardedMessage.userId] : [])
+    ]));
+
+    let nextMessages: ChatMessage[] = [];
+    setMessagesByChat((previous) => {
+      const current = previous[key] ?? [];
+      const pendingLocalMessages = current.filter(
+        (message) => message.origin === "local" && !hasServerId(message)
+      );
+      const sanitizedPending = pruneLocalEchoes(pendingLocalMessages, incoming);
+      nextMessages = mergeChatMessages(sanitizedPending, incoming);
+      return {
+        ...previous,
+        [key]: nextMessages
+      };
+    });
+
+    setPaginationForChat(chatId, (current) => ({
+      ...current,
+      loading: false,
+      loadingMode: null,
+      initialized: true,
+      oldestMessageId: getOldestServerMessageId(nextMessages),
+      newestMessageId: getNewestServerMessageId(nextMessages),
+      hasBefore: response.hasBefore,
+      hasAfter: response.hasAfter
+    }));
+
+    const serverIds = incoming
+      .map((message) => (typeof message.serverId === "string" ? message.serverId : null))
+      .filter((id): id is string => id !== null);
+    if (serverIds.length > 0) {
+      void api.batchGetReactions(profile.userId, serverIds).then(({ reactions }) => {
+        setReactionsByMessageId((prev) => ({ ...prev, ...reactions }));
+        setMyReactionsByMessageId((prev) => {
+          const updates: Record<string, string[]> = {};
+          for (const [msgId, msgReactions] of Object.entries(reactions)) {
+            updates[msgId] = msgReactions
+              .filter((reaction) => reaction.reactedByCurrentUser)
+              .map((reaction) => reaction.reactionType);
+          }
+          return { ...prev, ...updates };
+        });
+      }).catch(() => undefined);
+    }
+
+    requestAnimationFrame(() => {
+      if (activeChatIdRef.current !== chatId) {
+        return;
+      }
+      const element = findMessageElementByServerId(serverMessageId);
+      element?.scrollIntoView({ behavior: "auto", block: "center" });
+    });
+
+    return true;
+  }, [api, ensureUserNamesLoaded, profile, setPaginationForChat, setReactionsByMessageId]);
 
   const submitMessage = useCallback(async (
     chatId: number,
@@ -1984,17 +2375,26 @@ function App() {
 
   const loadUnreadCountForChat = useCallback(async (chatId: number, myUserId: number): Promise<number> => {
     let unread = 0;
+    let anchorMessageId: string | null = null;
 
     for (let page = 0; page < UNREAD_SCAN_MAX_PAGES; page += 1) {
-      const slice = await api.getMessages(chatId, UNREAD_SCAN_PAGE_SIZE, page);
+      const response = await api.getMessages(
+        chatId,
+        anchorMessageId ? { messageId: anchorMessageId, beforeLimit: UNREAD_SCAN_PAGE_SIZE } : {}
+      );
 
-      for (const message of slice.content) {
+      for (const message of response.messages) {
         if (message.userId !== myUserId && message.readStatus === false) {
           unread += 1;
         }
       }
 
-      if (slice.last || slice.content.length === 0) {
+      if (!response.hasBefore || response.messages.length === 0) {
+        break;
+      }
+
+      anchorMessageId = normalizeServerId(response.messages[response.messages.length - 1]?.id ?? undefined);
+      if (!anchorMessageId) {
         break;
       }
     }
@@ -2081,8 +2481,8 @@ function App() {
         await Promise.all(
           needPreview.slice(i, i + CONCURRENCY).map(async (chat) => {
             try {
-              const slice = await api.getMessages(chat.chatId, 1, 0);
-              const msg = slice.content[0];
+              const response = await api.getMessages(chat.chatId, {});
+              const msg = response.messages[0];
               if (!msg) return;
               const hasMedia = Array.isArray(msg.photoLinks) && msg.photoLinks.length > 0;
               setKnownChats((prev) => prev.map((c) =>
@@ -2343,6 +2743,40 @@ function App() {
     updateMessageContentByServerId(event.chatId, serverId, event.content, Boolean(event.editStatus));
   }, [updateMessageContentByServerId]);
 
+  const onSocketMessagePin = useCallback((event: SocketMessagePinEvent) => {
+    if (event.type === "message_unpin") {
+      setPinnedMessagesByChatId((previous) => {
+        const current = previous[event.chatId];
+        if (!current?.some((item) => item.messageId === event.messageId)) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          [event.chatId]: current.filter((item) => item.messageId !== event.messageId)
+        };
+      });
+      return;
+    }
+
+    setPinnedMessagesByChatId((previous) => {
+      const current = previous[event.chatId] ?? [];
+      return {
+        ...previous,
+        [event.chatId]: sortPinnedMessages([
+          ...current.filter((item) => item.messageId !== event.messageId),
+          {
+            chatId: event.chatId,
+            messageId: event.messageId,
+            content: event.content,
+            messageSendAt: event.messageSendAt,
+            pinnedByUserId: event.pinnedByUserId
+          }
+        ])
+      };
+    });
+  }, []);
+
   const onSocketPresence = useCallback((event: SocketPresenceEvent) => {
     const timers = presenceOfflineTimersRef.current;
     const clearOfflineTimer = () => {
@@ -2501,12 +2935,49 @@ function App() {
       }
     }
 
-    if (activeChatId === null || container.scrollTop > TOP_LOAD_THRESHOLD) {
+    if (activeChatId === null) {
       return;
     }
 
-    void loadHistoryPage(activeChatId, "prepend");
-  }, [activeChatId, loadHistoryPage]);
+    // Follow scroll position: the segmented pinned-message indicator tracks whichever pinned
+    // message has scrolled up past the top edge most recently (assumes ascending time order,
+    // which matches both the pin list order and the timeline order).
+    const chatPins = pinnedMessagesByChatId[activeChatId] ?? [];
+    if (chatPins.length > 0) {
+      const containerTop = container.getBoundingClientRect().top;
+      let passedIndex = -1;
+      let anyPinRendered = false;
+      for (let i = 0; i < chatPins.length; i += 1) {
+        const element = findMessageElementByServerId(chatPins[i].messageId);
+        if (!element) {
+          continue;
+        }
+        anyPinRendered = true;
+        if (element.getBoundingClientRect().top - containerTop <= BOTTOM_AUTO_SCROLL_THRESHOLD) {
+          passedIndex = i;
+        } else {
+          break;
+        }
+      }
+      // Only move the indicator when a pinned message is actually visible/rendered nearby —
+      // otherwise (e.g. viewing the live tail, far from any pin) leave it at its default
+      // (most recently pinned) instead of snapping to the first one.
+      if (anyPinRendered) {
+        setActivePinnedIndex(passedIndex >= 0 ? passedIndex : 0);
+      }
+    }
+
+    if (container.scrollTop <= TOP_LOAD_THRESHOLD) {
+      void loadHistoryPage(activeChatId, "prepend");
+      return;
+    }
+
+    const pagination = getChatPagination(paginationRef.current, String(activeChatId));
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (pagination.hasAfter && distanceToBottom <= TOP_LOAD_THRESHOLD) {
+      void loadHistoryPage(activeChatId, "append");
+    }
+  }, [activeChatId, loadHistoryPage, pinnedMessagesByChatId]);
 
   useLayoutEffect(() => {
     const el = messageMenuRef.current;
@@ -3014,6 +3485,7 @@ function App() {
         onMessageRead: onSocketMessageRead,
         onMessageDelete: onSocketMessageDelete,
         onMessageEdit: onSocketMessageEdit,
+        onMessagePin: onSocketMessagePin,
         onPresence: onSocketPresence,
         onReaction: onSocketReaction,
         onTyping: onSocketTyping,
@@ -3036,6 +3508,7 @@ function App() {
     onSocketMessage,
     onSocketMessageDelete,
     onSocketMessageEdit,
+    onSocketMessagePin,
     onSocketMessageRead,
     onSocketPresence,
     onSocketReaction,
@@ -3066,8 +3539,25 @@ function App() {
       return;
     }
 
+    let cancelled = false;
+    void api.getPinnedMessages(activeChatId).then((pins) => {
+      if (cancelled) return;
+      setPinnedMessagesByChatId((previous) => ({
+        ...previous,
+        [activeChatId]: sortPinnedMessages(pins)
+      }));
+    }).catch(() => undefined);
+
+    return () => { cancelled = true; };
+  }, [activeChatId, api, profile]);
+
+  useEffect(() => {
+    if (!profile || activeChatId === null) {
+      return;
+    }
+
     const pagination = getChatPagination(paginationRef.current, String(activeChatId));
-    if (!pagination.initialized || pagination.loading || !pagination.hasMore) {
+    if (!pagination.initialized || pagination.loading || !pagination.hasBefore) {
       return;
     }
 
@@ -3201,6 +3691,18 @@ function App() {
       && messageMenuMessage.delivery !== "failed"
       && !messageMenuMessage.forwardedMessage
   );
+  const messageMenuServerId = messageMenuMessage ? normalizeServerId(messageMenuMessage.serverId) : null;
+  const messageMenuIsPinned = Boolean(
+    messageMenuServerId
+      && activeChatId !== null
+      && (pinnedMessagesByChatId[activeChatId] ?? []).some((item) => item.messageId === messageMenuServerId)
+  );
+  const messageMenuCanPin = Boolean(
+    messageMenuMessage
+      && messageMenuMessage.delivery !== "pending"
+      && messageMenuMessage.delivery !== "failed"
+      && !pinMessageBusyById[messageMenuMessage.id]
+  );
   const chatMenuChat = useMemo(
     () => (chatMenu ? sortedChats.find((chat) => chat.chatId === chatMenu.chatId) ?? null : null),
     [chatMenu, sortedChats]
@@ -3282,6 +3784,68 @@ function App() {
 
     return getChatPagination(paginationByChat, String(activeChatId));
   }, [activeChatId, paginationByChat]);
+
+  const activeChatPins = useMemo(
+    () => (activeChatId !== null ? pinnedMessagesByChatId[activeChatId] ?? [] : []),
+    [activeChatId, pinnedMessagesByChatId]
+  );
+
+  // Default the segmented indicator to the most recently pinned message whenever the pin
+  // list for the open chat first appears or changes size (e.g. a new pin arrives over WS).
+  useEffect(() => {
+    setActivePinnedIndex(activeChatPins.length > 0 ? activeChatPins.length - 1 : -1);
+  }, [activeChatId, activeChatPins.length]);
+
+  useEffect(() => {
+    setPinnedListOpen(false);
+  }, [activeChatId]);
+
+  const highlightMessage = useCallback((messageId: string) => {
+    if (highlightMessageTimeoutRef.current !== null) {
+      window.clearTimeout(highlightMessageTimeoutRef.current);
+    }
+    setHighlightedMessageId(messageId);
+    highlightMessageTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedMessageId(null);
+      highlightMessageTimeoutRef.current = null;
+    }, 1600);
+  }, []);
+
+  const jumpToPinnedMessage = useCallback((pinned: PinnedChatMessage) => {
+    if (activeChatId === null) {
+      return;
+    }
+
+    const localMessageId = `server-${pinned.messageId}`;
+    const isLoaded = messagesByChat[String(activeChatId)]?.some(
+      (message) => normalizeServerId(message.serverId) === pinned.messageId
+    );
+    if (isLoaded) {
+      const element = findMessageElementByServerId(pinned.messageId);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        highlightMessage(localMessageId);
+        return;
+      }
+    }
+
+    void loadPinnedMessageWindow(activeChatId, pinned.messageId).then((success) => {
+      if (success) {
+        highlightMessage(localMessageId);
+      }
+    });
+  }, [activeChatId, highlightMessage, loadPinnedMessageWindow, messagesByChat]);
+
+  const handlePinnedBarClick = useCallback(() => {
+    if (activeChatPins.length === 0) {
+      return;
+    }
+
+    const index = activePinnedIndex >= 0 && activePinnedIndex < activeChatPins.length
+      ? activePinnedIndex
+      : activeChatPins.length - 1;
+    jumpToPinnedMessage(activeChatPins[index]);
+  }, [activeChatPins, activePinnedIndex, jumpToPinnedMessage]);
 
   useEffect(() => {
     if (route !== "/" || activeChatId === null || !profile) {
@@ -3884,13 +4448,7 @@ function App() {
       }
 
       try {
-        let serverId = normalizeServerId(targetMessage.serverId);
-        if (!serverId) {
-          serverId = await resolveServerIdForMessage(targetMessage);
-          if (serverId) {
-            updateMessageServerId(targetMessage.chatId, targetMessage.id, serverId);
-          }
-        }
+        const serverId = await ensureMessageServerId(targetMessage);
 
         if (!serverId) {
           setNotice("Не удалось определить ID сообщения для редактирования. Обновите чат и попробуйте снова.");
@@ -4090,7 +4648,7 @@ function App() {
           const uploads = await Promise.all(filesToUpload.map((file) => api.uploadMedia(file)));
           uploadedPhotoLinks = uploads.map((r) => r.url);
           uploadedPhotoLinks.forEach((filename, i) => {
-            if (blobUrls[i]) mediaBlobCache.set(filename, blobUrls[i]);
+            if (blobUrls[i]) cacheMediaBlob(filename, blobUrls[i]);
           });
           updateMessagePhotoLinks(finalChatId, messageId, uploadedPhotoLinks);
         } catch (error) {
@@ -4112,7 +4670,7 @@ function App() {
   };
 
   const handleRetryMessage = async (message: ChatMessage) => {
-    updateMessageDelivery(message.chatId, message.id, "pending");
+    resetMessageForRetry(message.chatId, message.id);
     const repliedId = message.repliedMessage?.id ?? null;
     await submitMessage(message.chatId, message.content, message.id, repliedId, message.photoLinks ?? null);
   };
@@ -4133,13 +4691,7 @@ function App() {
     }));
 
     try {
-      let serverId = normalizeServerId(message.serverId);
-      if (!serverId) {
-        serverId = await resolveServerIdForMessage(message);
-        if (serverId) {
-          updateMessageServerId(message.chatId, message.id, serverId);
-        }
-      }
+      const serverId = await ensureMessageServerId(message);
 
       if (!serverId) {
         setNotice("Не удалось определить ID сообщения для удаления. Обновите чат и попробуйте снова.");
@@ -4148,6 +4700,17 @@ function App() {
 
       await api.deleteMessage(serverId);
       removeMessageFromState(message.chatId, message.id);
+      setPinnedMessagesByChatId((previous) => {
+        const current = previous[message.chatId];
+        if (!current?.some((item) => item.messageId === serverId)) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          [message.chatId]: current.filter((item) => item.messageId !== serverId)
+        };
+      });
       setNotice("Сообщение удалено.");
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
@@ -4158,6 +4721,99 @@ function App() {
       }
     } finally {
       setDeleteMessageBusyById((previous) => {
+        if (!previous[message.id]) {
+          return previous;
+        }
+
+        const next = { ...previous };
+        delete next[message.id];
+        return next;
+      });
+    }
+  };
+
+  const handlePinMessage = async (message: ChatMessage) => {
+    if (!profile) {
+      return;
+    }
+
+    setPinMessageBusyById((previous) => ({
+      ...previous,
+      [message.id]: true
+    }));
+
+    try {
+      const serverId = await ensureMessageServerId(message);
+
+      if (!serverId) {
+        setNotice("Не удалось определить ID сообщения для закрепления. Обновите чат и попробуйте снова.");
+        return;
+      }
+
+      await api.pinMessage(serverId);
+      setPinnedMessagesByChatId((previous) => {
+        const current = previous[message.chatId] ?? [];
+        return {
+          ...previous,
+          [message.chatId]: sortPinnedMessages([
+            ...current.filter((item) => item.messageId !== serverId),
+            {
+              chatId: message.chatId,
+              messageId: serverId,
+              content: message.content || (message.photoLinks?.length ? "Фото" : ""),
+              messageSendAt: message.createdAt ?? formatLocalDateTime(Date.now()),
+              pinnedByUserId: profile.userId
+            }
+          ])
+        };
+      });
+      setNotice("Сообщение закреплено.");
+    } catch (error) {
+      setNotice(toMessageText(error));
+    } finally {
+      setPinMessageBusyById((previous) => {
+        if (!previous[message.id]) {
+          return previous;
+        }
+
+        const next = { ...previous };
+        delete next[message.id];
+        return next;
+      });
+    }
+  };
+
+  const handleUnpinMessage = async (message: ChatMessage) => {
+    setPinMessageBusyById((previous) => ({
+      ...previous,
+      [message.id]: true
+    }));
+
+    try {
+      const serverId = await ensureMessageServerId(message);
+
+      if (!serverId) {
+        setNotice("Не удалось определить ID сообщения для открепления. Обновите чат и попробуйте снова.");
+        return;
+      }
+
+      await api.unpinMessage(serverId);
+      setPinnedMessagesByChatId((previous) => {
+        const current = previous[message.chatId];
+        if (!current?.some((item) => item.messageId === serverId)) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          [message.chatId]: current.filter((item) => item.messageId !== serverId)
+        };
+      });
+      setNotice("Сообщение откреплено.");
+    } catch (error) {
+      setNotice(toMessageText(error));
+    } finally {
+      setPinMessageBusyById((previous) => {
         if (!previous[message.id]) {
           return previous;
         }
@@ -4388,6 +5044,20 @@ function App() {
       window.clearTimeout(timerId);
     }
     presenceOfflineTimersRef.current = {};
+  }, []);
+
+  useEffect(() => () => {
+    for (const timerId of Object.values(typingTimeoutsRef.current)) {
+      window.clearTimeout(timerId);
+    }
+    typingTimeoutsRef.current = {};
+  }, []);
+
+  useEffect(() => () => {
+    if (highlightMessageTimeoutRef.current !== null) {
+      window.clearTimeout(highlightMessageTimeoutRef.current);
+      highlightMessageTimeoutRef.current = null;
+    }
   }, []);
 
   const handleMessageContextMenu = (event: ReactMouseEvent<HTMLElement>, message: ChatMessage) => {
@@ -4945,6 +5615,83 @@ function App() {
 
             {hasActiveConversation ? (
               <div className="tg-chat-pane-inner">
+                {activeChatPins.length > 0 && (() => {
+                  const safeIndex = activePinnedIndex >= 0 && activePinnedIndex < activeChatPins.length
+                    ? activePinnedIndex
+                    : activeChatPins.length - 1;
+                  const currentPin = activeChatPins[safeIndex];
+                  return (
+                    <div className="tg-pinned-bar">
+                      <button type="button" className="tg-pinned-bar-main" onClick={handlePinnedBarClick}>
+                        {activeChatPins.length > 1 ? (
+                          <span className="tg-pinned-bar-steps" aria-hidden="true">
+                            {activeChatPins.map((pin, index) => (
+                              <span
+                                key={pin.messageId}
+                                className={`tg-pinned-bar-step${index <= safeIndex ? " filled" : ""}`}
+                              />
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="tg-pinned-bar-icon">📌</span>
+                        )}
+                        <span className="tg-pinned-bar-body">
+                          <span className="tg-pinned-bar-label">
+                            {activeChatPins.length > 1 ? `Закреплённое сообщение ${safeIndex + 1}/${activeChatPins.length}` : "Закреплённое сообщение"}
+                          </span>
+                          <span className="tg-pinned-bar-text">{currentPin.content || "Фото"}</span>
+                        </span>
+                      </button>
+                      <div className="tg-pinned-bar-actions">
+                        {activeChatPins.length > 1 && (
+                          <button
+                            type="button"
+                            className="tg-pinned-bar-action"
+                            title="Список закреплённых сообщений"
+                            aria-label="Список закреплённых сообщений"
+                            onClick={() => setPinnedListOpen(true)}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <line x1="8" y1="6" x2="20" y2="6"/>
+                              <line x1="8" y1="12" x2="20" y2="12"/>
+                              <line x1="8" y1="18" x2="20" y2="18"/>
+                              <circle cx="4" cy="6" r="1.4"/>
+                              <circle cx="4" cy="12" r="1.4"/>
+                              <circle cx="4" cy="18" r="1.4"/>
+                            </svg>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="tg-pinned-bar-action danger"
+                          title="Открепить"
+                          aria-label="Открепить"
+                          onClick={() => {
+                            const loadedMessage = activeChatId !== null
+                              ? messagesByChat[String(activeChatId)]?.find(
+                                  (message) => normalizeServerId(message.serverId) === currentPin.messageId
+                                )
+                              : null;
+                            void handleUnpinMessage(
+                              loadedMessage ?? {
+                                id: `server-${currentPin.messageId}`,
+                                chatId: currentPin.chatId,
+                                userId: currentPin.pinnedByUserId,
+                                content: currentPin.content,
+                                createdAt: currentPin.messageSendAt,
+                                serverId: currentPin.messageId,
+                                delivery: "sent",
+                                origin: "remote"
+                              }
+                            );
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {/* Rename strip for groups */}
                 {chatRenameOpen && activeChatId !== null && (
                   <div className="tg-rename-strip">
@@ -4967,11 +5714,11 @@ function App() {
                   </div>
                 )}
                 <div className="tg-timeline" ref={timelineRef} onScroll={handleTimelineScroll}>
-                  {activePagination.loading && activePagination.initialized && (
+                  {activePagination.loading && activePagination.initialized && activePagination.loadingMode === "prepend" && (
                     <div className="tg-history-loader">Загрузка более ранних сообщений...</div>
                   )}
 
-                  {!activePagination.hasMore && currentMessages.length > 0 && (
+                  {!activePagination.hasBefore && currentMessages.length > 0 && (
                     <div className="tg-history-limit">Начало истории чата</div>
                   )}
 
@@ -5003,8 +5750,9 @@ function App() {
                       const senderColor = senderName ? avatarColor(message.userId) : undefined;
                       return (
                         <article
-                          className={mine ? "tg-bubble mine" : "tg-bubble remote"}
+                          className={`${mine ? "tg-bubble mine" : "tg-bubble remote"}${highlightedMessageId === message.id ? " tg-bubble-highlight" : ""}`}
                           key={row.key}
+                          data-message-id={message.id}
                           onContextMenu={(event) => handleMessageContextMenu(event, message)}
                           onTouchStart={(event) => startLongPress(event, { kind: "message", messageId: message.id })}
                           onTouchMove={moveLongPress}
@@ -5077,6 +5825,9 @@ function App() {
                             </div>
                           )}
                           <footer>
+                            {msgServerId && activeChatPins.some((pin) => pin.messageId === msgServerId) && (
+                              <span className="tg-pinned-tag">📌 Закреплено</span>
+                            )}
                             {dbMessageTime && <span>{dbMessageTime}</span>}
                             {message.edited && <span>Изменено</span>}
                             {mine && (
@@ -5097,6 +5848,10 @@ function App() {
                         </article>
                       );
                     })
+                  )}
+
+                  {activePagination.loading && activePagination.initialized && activePagination.loadingMode === "append" && (
+                    <div className="tg-history-loader">Загрузка новых сообщений...</div>
                   )}
                 </div>
 
@@ -6038,6 +6793,18 @@ function App() {
               Повторить
             </button>
           )}
+          {messageMenuCanPin && (
+            <button
+              type="button"
+              className="tg-message-menu-item"
+              onClick={() => {
+                setMessageMenu(null);
+                void (messageMenuIsPinned ? handleUnpinMessage(messageMenuMessage) : handlePinMessage(messageMenuMessage));
+              }}
+            >
+              {messageMenuIsPinned ? "Открепить" : "Закрепить"}
+            </button>
+          )}
           {messageMenuCanDelete && (
             <button
               type="button"
@@ -6166,6 +6933,34 @@ function App() {
                   <button type="button" className="secondary" onClick={() => setMyRenameOpen(false)}>Отмена</button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Pinned Messages Modal ─────────────────── */}
+      {pinnedListOpen && (
+        <div className="tg-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setPinnedListOpen(false); }}>
+          <div className="tg-modal tg-pinned-modal">
+            <div className="tg-modal-head">
+              <h2>Закреплённые сообщения</h2>
+              <button type="button" className="tg-modal-close" onClick={() => setPinnedListOpen(false)}>✕</button>
+            </div>
+            <div className="tg-pinned-modal-body">
+              {[...activeChatPins].reverse().map((pin) => (
+                <button
+                  key={pin.messageId}
+                  type="button"
+                  className="tg-pinned-modal-item"
+                  onClick={() => {
+                    setPinnedListOpen(false);
+                    jumpToPinnedMessage(pin);
+                  }}
+                >
+                  <span className="tg-pinned-modal-item-icon">📌</span>
+                  <span className="tg-pinned-modal-item-text">{pin.content || "Фото"}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>

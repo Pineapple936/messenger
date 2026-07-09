@@ -5,7 +5,8 @@ import type {
     EditProfilePayload,
     LoginPayload,
     MessageHistoryItem,
-    MessageSlice,
+    MessageListResponse,
+    PinnedChatMessage,
     Reaction,
     RegisterPayload,
     TokenPair,
@@ -21,6 +22,12 @@ type ApiConfig = {
 type RequestOptions = {
   auth?: boolean;
   noRefresh?: boolean;
+};
+
+type MessageHistoryParams = {
+  messageId?: string | null;
+  beforeLimit?: number | null;
+  afterLimit?: number | null;
 };
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -360,8 +367,21 @@ export function createApiClient(config: ApiConfig) {
 
     leaveChat: (chatId: number) => request<void>(`/chat/leave/${chatId}`, { method: "DELETE" }),
 
-    getMessages: (chatId: number, limit = 30, offset = 0) =>
-      request<MessageSlice>(`/message/chat/${chatId}?limit=${limit}&offset=${offset}`, { method: "GET" }),
+    getMessages: (chatId: number, params: MessageHistoryParams = {}) => {
+      const search = new URLSearchParams();
+      if (params.messageId) {
+        search.set("messageId", params.messageId);
+      }
+      if (params.beforeLimit != null) {
+        search.set("beforeLimit", String(params.beforeLimit));
+      }
+      if (params.afterLimit != null) {
+        search.set("afterLimit", String(params.afterLimit));
+      }
+
+      const query = search.toString();
+      return request<MessageListResponse>(`/message/chat/${chatId}${query ? `?${query}` : ""}`, { method: "GET" });
+    },
 
     readMessage: (messageId: string | number) =>
       request<void>(`/message/read/${encodeURIComponent(String(messageId))}`, { method: "PUT" }),
@@ -374,6 +394,15 @@ export function createApiClient(config: ApiConfig) {
 
     deleteMessage: (messageId: string | number) =>
       request<void>(`/message/${encodeURIComponent(String(messageId))}`, { method: "DELETE" }),
+
+    pinMessage: (messageId: string | number) =>
+      request<void>(`/message/pin/${encodeURIComponent(String(messageId))}`, { method: "POST" }),
+
+    getPinnedMessages: (chatId: number) =>
+      request<PinnedChatMessage[]>(`/message/chat/${encodeURIComponent(String(chatId))}/pins`, { method: "GET" }),
+
+    unpinMessage: (messageId: string | number) =>
+      request<void>(`/message/unpin/${encodeURIComponent(String(messageId))}`, { method: "DELETE" }),
 
     editMessage: (messageId: string | number, content: string) =>
       request<MessageHistoryItem>("/message/edit", {

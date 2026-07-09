@@ -60,14 +60,19 @@ export type MessageHistoryItem = {
   photoLinks?: string[] | null;
 };
 
-export type MessageSlice = {
-  content: MessageHistoryItem[];
-  number: number;
-  size: number;
-  numberOfElements: number;
-  first: boolean;
-  last: boolean;
-  empty: boolean;
+export type MessageListResponse = {
+  messages: MessageHistoryItem[];
+  anchorMessageId: string | null;
+  hasBefore: boolean;
+  hasAfter: boolean;
+};
+
+export type PinnedChatMessage = {
+  chatId: number;
+  messageId: string;
+  content: string;
+  messageSendAt: string;
+  pinnedByUserId: number;
 };
 
 export type ChatSlice = {

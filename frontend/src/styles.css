@@ -1604,6 +1604,178 @@ button:disabled {
   border-radius: 9px;
 }
 
+/* ── Pinned messages bar ─────────────────────────────── */
+.tg-pinned-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 1rem;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.tg-pinned-bar-main {
+  appearance: none;
+  border: none;
+  outline: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tg-pinned-bar-main:hover {
+  background: var(--bg-accent);
+}
+
+.tg-pinned-bar-icon {
+  flex-shrink: 0;
+}
+
+/* Vertical segmented indicator, one bar per pinned message — like Telegram's pinned-message
+   stepper. Segments up to the active index are filled with the accent color. */
+.tg-pinned-bar-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-self: stretch;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 3px;
+}
+
+.tg-pinned-bar-step {
+  flex: 1;
+  width: 3px;
+  min-height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background-color 0.15s ease;
+}
+
+.tg-pinned-bar-step.filled {
+  background: var(--primary);
+}
+
+.tg-pinned-bar-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.tg-pinned-bar-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.tg-pinned-bar-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+}
+
+/* Column of small round action buttons (list, unpin) stacked to the right of the bar text. */
+.tg-pinned-bar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.tg-pinned-bar-action {
+  appearance: none;
+  border: none;
+  outline: none;
+  background: var(--secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  color: var(--ghost-text);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.tg-pinned-bar-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.tg-pinned-bar-action:hover {
+  background: var(--secondary-hover);
+  color: var(--text);
+}
+
+.tg-pinned-bar-action.danger:hover {
+  background: var(--bg-accent-secondary);
+  color: var(--retry-text);
+}
+
+/* ── Pinned messages modal ───────────────────────────── */
+.tg-pinned-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tg-pinned-modal-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 0.92rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.tg-pinned-modal-item:hover {
+  background: var(--secondary);
+}
+
+.tg-pinned-modal-item-icon {
+  flex-shrink: 0;
+}
+
+.tg-pinned-modal-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Sidebar new group btn ───────────────────────────── */
 
 .tg-new-group-btn {
@@ -2238,6 +2410,24 @@ button:disabled {
   position: relative;
 }
 
+/* Brief glow when a message is scrolled to via jump-to-pinned (or similar jump actions),
+   instead of a plain gray outline. */
+.tg-bubble-highlight {
+  animation: bubble-jump-highlight 1.6s ease-out;
+}
+
+@keyframes bubble-jump-highlight {
+  0% {
+    box-shadow: 0 0 0 3px var(--primary), 0 1px 3px rgba(0, 0, 0, 0.07);
+  }
+  70% {
+    box-shadow: 0 0 0 3px var(--primary), 0 1px 3px rgba(0, 0, 0, 0.07);
+  }
+  100% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+  }
+}
+
 .tg-bubble p {
   margin: 0;
   line-height: 1.42;
@@ -2259,6 +2449,11 @@ button:disabled {
   color: var(--bubble-footer);
   white-space: nowrap;
   pointer-events: none;
+}
+
+.tg-pinned-tag {
+  font-weight: 600;
+  color: var(--primary) !important;
 }
 
 .tg-bubble footer > span:not(.delivery) {

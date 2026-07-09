@@ -37,6 +37,20 @@ export type SocketMessageEditEvent = {
   editStatus?: boolean;
 };
 
+export type SocketMessagePinEvent = {
+  type: "message_pin";
+  chatId: number;
+  messageId: string;
+  content: string;
+  messageSendAt: string;
+  pinnedByUserId: number;
+} | {
+  type: "message_unpin";
+  chatId: number;
+  messageId: string;
+  unpinnedByUserId: number;
+};
+
 export type SocketPresenceEvent = {
   type: "presence";
   userId: number;
@@ -62,6 +76,7 @@ type RealtimeHandlers = {
   onMessageRead: (event: SocketMessageReadEvent) => void;
   onMessageDelete: (event: SocketMessageDeleteEvent) => void;
   onMessageEdit: (event: SocketMessageEditEvent) => void;
+  onMessagePin: (event: SocketMessagePinEvent) => void;
   onPresence: (event: SocketPresenceEvent) => void;
   onReaction: (event: SocketReactionEvent) => void;
   onTyping: (event: SocketTypingEvent) => void;
@@ -179,6 +194,29 @@ function isSocketMessageEditEvent(payload: unknown): payload is SocketMessageEdi
     typeof value.content === "string" &&
     (value.editStatus == null || typeof value.editStatus === "boolean")
   );
+}
+
+function isSocketMessagePinEvent(payload: unknown): payload is SocketMessagePinEvent {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const value = payload as Record<string, unknown>;
+  if (value.type !== "message_pin" && value.type !== "message_unpin") {
+    return false;
+  }
+
+  if (typeof value.chatId !== "number" || typeof value.messageId !== "string") {
+    return false;
+  }
+
+  if (value.type === "message_pin") {
+    return typeof value.content === "string" &&
+      typeof value.messageSendAt === "string" &&
+      typeof value.pinnedByUserId === "number";
+  }
+
+  return typeof value.unpinnedByUserId === "number";
 }
 
 function isSocketPresenceEvent(payload: unknown): payload is SocketPresenceEvent {
@@ -366,6 +404,11 @@ export class RealtimeBridge {
 
         if (isSocketMessageEditEvent(payload)) {
           this.handlers.onMessageEdit(payload);
+          return;
+        }
+
+        if (isSocketMessagePinEvent(payload)) {
+          this.handlers.onMessagePin(payload);
           return;
         }
 
